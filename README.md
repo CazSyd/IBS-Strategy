@@ -20,7 +20,7 @@ All data is fetched via the [`yfinance`](https://github.com/ranaroussi/yfinance)
 The strategy is specifically tested on **high-volatility, leveraged ETFs**, which tend to exhibit stronger mean-reverting behavior. The primary tickers analyzed in this project are:
 
 - **TQQQ**: ProShares UltraPro QQQ (3x leveraged NASDAQ-100)
-- **SPXL**: Direxion Daily S&P 500 Bull 3X Shares (formerly listed as SQXL on some platforms)
+- **SPXL**: Direxion Daily S&P 500 Bull 3X Shares
 
 ## Key Features
 
@@ -33,7 +33,7 @@ The strategy is specifically tested on **high-volatility, leveraged ETFs**, whic
 
 This project is for educational and research purposes only. Trading involves significant risk and past performance does not guarantee future returns.
 
-The information and publications are not intended to be and do not constitute financial advice, investment advice, trading advice or any other advice or recommendation of any sort. The publisher also does not warrant that such information and publications are accurate, up to date or applicable to the circumstances of any particular case.
+The publication is not intended to be and do not constitute financial advice, investment advice, trading advice or any other advice or recommendation of any sort. The publisher also does not warrant that the publication is accurate, up to date or applicable to the circumstances of any particular case.
 
 ---
 
