@@ -28,6 +28,7 @@ The strategy is specifically tested on **high-volatility, leveraged ETFs**, whic
 - Computation of IBS values and backtesting of entry/exit rules
 - Performance metrics including Total Returns, Sharpe Ratio, Max Drawdown, and Win Rate
 - Flexible parameter tuning for optimizing the strategy
+- Real-time Buy/Sell signal on any ticker, track past recent signals via plot 
 
 ## ⚠️ Disclaimer
 
