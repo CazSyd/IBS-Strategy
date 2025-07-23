@@ -1,6 +1,6 @@
 # IBS Strategy on Leveraged ETF Tickers
 
-This project applies the **Internal Bar Strength (IBS)** strategy to historical ticker data downloaded using the `yfinance` library. The strategy is implemented and analyzed in a Google Colab environment. This strategy is based on [u/heygentlewhale's post on Reddit](https://www.reddit.com/r/TQQQ/comments/1l63i0i/tqqq_internal_bar_strength_strategy_that_made_me/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button)
+This project applies the **Internal Bar Strength (IBS)** strategy to historical ticker data downloaded using the `yfinance` library. The strategy is implemented and analyzed in a Google Colab environment. This strategy is based on [u/heygentlewhale's post on Reddit](https://www.reddit.com/r/TQQQ/comments/1l63i0i/tqqq_internal_bar_strength_strategy_that_made_me/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button).
 
 ## Overview
 
@@ -8,8 +8,11 @@ The IBS strategy is a mean-reversion trading method that evaluates the relative 
 
 IBS = (Close - Low) / (High - Low)
 
-
 Low IBS values (close to 0) may signal oversold conditions, while high IBS values (close to 1) may suggest overbought conditions.
+
+This strategy is robust. Backtesting from 2022/01/01 to 2023/01/01 during market downturn shows significant outperformance.
+
+![2022-2023 Backtest Results on TQQQ](20222023backtest.png)
 
 ## Data Source
 
