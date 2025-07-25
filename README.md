@@ -1,7 +1,8 @@
 # IBS Strategy on Leveraged ETF Tickers
 
 This project applies the **Internal Bar Strength (IBS)** strategy to historical ticker data downloaded using the `yfinance` library. The strategy is implemented and analyzed in a Google Colab environment. This strategy is based on [u/heygentlewhale's post on Reddit](https://www.reddit.com/r/TQQQ/comments/1l63i0i/tqqq_internal_bar_strength_strategy_that_made_me/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button).
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CazSyd/IBS-Strategy/blob/main/IBS-strategy.ipynb)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CazSyd/IBS-Strategy/IBS_strategy.ipynb)
 
 ## Overview
 
