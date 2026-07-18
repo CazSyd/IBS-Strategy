@@ -41,6 +41,7 @@ from .visualize import (
     plot_signals,
     plot_walk_forward,
 )
+from .web import build_signal_figure, open_in_browser, render_signal_page
 
 __version__ = "0.1.0"
 
@@ -78,4 +79,7 @@ __all__ = [
     "plot_heatmap",
     "plot_signals",
     "plot_walk_forward",
+    "build_signal_figure",
+    "open_in_browser",
+    "render_signal_page",
 ]
