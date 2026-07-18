@@ -10,6 +10,7 @@ dependencies = [
     "pandas>=2.2",
     "numpy>=1.26",
     "matplotlib>=3.8",
+    "plotly>=6.0",
     "pytz>=2023.3",
 ]
 
