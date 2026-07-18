@@ -19,6 +19,7 @@ from .data import load_data
 __all__ = [
     "MARKET_TZ",
     "MARKET_CLOSE",
+    "DEFAULT_LOOKBACK_DAYS",
     "SignalReport",
     "classify",
     "signal_from_frame",
@@ -27,6 +28,7 @@ __all__ = [
 
 MARKET_TZ = pytz.timezone("America/New_York")
 MARKET_CLOSE = time(16, 0)
+DEFAULT_LOOKBACK_DAYS = 365
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,7 @@ def latest_signal(
     ticker: str,
     entry_threshold: float = DEFAULT_ENTRY_THRESHOLD,
     exit_threshold: float = DEFAULT_EXIT_THRESHOLD,
-    lookback_days: int = 100,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     now: datetime | None = None,
 ) -> SignalReport:
     """Download the last ``lookback_days`` calendar days and classify the latest bar."""
