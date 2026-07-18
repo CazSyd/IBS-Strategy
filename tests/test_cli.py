@@ -36,6 +36,9 @@ def test_parser_wires_subcommands():
     args = parser.parse_args(["optimize", "TQQQ", "--objective", "cagr"])
     assert args.objective == "cagr"
 
+    args = parser.parse_args(["signal", "TQQQ"])
+    assert args.lookback == 365
+
 
 def test_default_thresholds_are_whole_period_optimum():
     from ibs_strategy.backtest import DEFAULT_ENTRY_THRESHOLD, DEFAULT_EXIT_THRESHOLD
