@@ -1,0 +1,31 @@
+[project]
+name = "ibs-strategy"
+version = "0.1.0"
+description = "Internal Bar Strength (IBS) mean-reversion strategy: backtesting engine, purged walk-forward validation, and signal visualization"
+readme = "README.md"
+authors = [{ name = "CazSyd" }]
+requires-python = ">=3.10"
+dependencies = [
+    "yfinance>=0.2.50",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "pytz>=2023.3",
+]
+
+[project.scripts]
+ibs = "ibs_strategy.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+notebook = ["jupyterlab>=4.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ibs_strategy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
