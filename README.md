@@ -4,7 +4,7 @@ This project applies the **Internal Bar Strength (IBS)** mean-reversion strategy
 
 The repo is a small, tested Python package with a backtesting engine, threshold optimization, **purged walk-forward validation**, signal visualization, and a live-signal command that opens an **interactive candlestick chart** of the past year's trades. The original notebook is kept at the repo root and still runs in Colab:
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CazSyd/IBS-Strategy/blob/main/IBS_strategy.ipynb)
+[![CI](https://github.com/CazSyd/IBS-Strategy/actions/workflows/ci.yml/badge.svg)](https://github.com/CazSyd/IBS-Strategy/actions/workflows/ci.yml) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CazSyd/IBS-Strategy/blob/main/IBS_strategy.ipynb)
 
 ## The strategy
 
@@ -116,12 +116,25 @@ Caveat: the headline row is still fitted in-sample and no commissions or slippag
 
 ![2022-2023 Backtest Results on TQQQ](20222023backtest.png)
 
+## CI & the hosted signal page
+
+Two GitHub Actions workflows live in `.github/workflows/`:
+
+- **`ci.yml`** - runs `uv sync --locked` + the pytest suite on every push and pull request.
+- **`pages.yml`** - rebuilds the interactive signal pages (`scripts/build_site.py`, TQQQ + SPXL) and deploys them to GitHub Pages on every push to `main` and on a weekday schedule (21:30 UTC, after the 4pm ET close), so the hosted page always shows the latest completed session:
+
+**Live signals: <https://cazsyd.github.io/IBS-Strategy/>**
+
+One-time setup after pushing: in the repo's **Settings → Pages**, set **Source** to **GitHub Actions**.
+
 ## Project layout
 
 ```
 ├── IBS_strategy.ipynb        # original Colab notebook (kept as-is)
 ├── pyproject.toml            # uv-managed project + dependencies
 ├── uv.lock                   # locked environment
+├── .github/workflows/        # CI (tests) + GitHub Pages deploy
+├── scripts/build_site.py     # builds the hosted signal pages
 ├── src/ibs_strategy/
 │   ├── data.py               # yfinance download + IBS computation
 │   ├── backtest.py           # event-driven backtest engine
