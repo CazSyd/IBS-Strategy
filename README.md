@@ -2,7 +2,7 @@
 
 This project applies the **Internal Bar Strength (IBS)** mean-reversion strategy to daily ticker data from Yahoo Finance. It is based on [u/heygentlewhale's post on Reddit](https://www.reddit.com/r/TQQQ/comments/1l63i0i/tqqq_internal_bar_strength_strategy_that_made_me/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button).
 
-What started as a Colab notebook is now a small, tested Python package with a backtesting engine, threshold optimization, **purged walk-forward validation**, signal visualization, and a live-signal CLI. The original notebook is kept at the repo root and still runs in Colab:
+The repo is a small, tested Python package with a backtesting engine, threshold optimization, **purged walk-forward validation**, signal visualization, and a live-signal command that opens an **interactive candlestick chart** of the past year's trades. The original notebook is kept at the repo root and still runs in Colab:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CazSyd/IBS-Strategy/blob/main/IBS_strategy.ipynb)
 
@@ -16,8 +16,8 @@ IBS = (Close - Low) / (High - Low)
 
 Values near 0 mean the close sat at the low of the day (oversold), values near 1 at the high (overbought). The strategy is long-only on daily bars:
 
-- **Entry** - if flat and *yesterday's* IBS < entry threshold (default **0.13**), buy at *today's open*, all-in with whole shares.
-- **Exit** - if long and *yesterday's* IBS > exit threshold (default **0.97**), sell at *today's open*.
+- **Entry** - if flat and _yesterday's_ IBS < entry threshold (default **0.13**), buy at _today's open_, all-in with whole shares.
+- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.97**), sell at _today's open_.
 - Equity is marked to market at each close. No commissions or slippage are modeled.
 
 The default thresholds are the CAGR-optimal pair over TQQQ's full listing history (2010-2026, see the results snapshot below); pass `--entry`/`--exit` (or the function arguments) to try others, e.g. the notebook's original 0.19/0.95.
@@ -48,11 +48,11 @@ uv run ibs optimize TQQQ --objective cagr
 # Purged walk-forward validation: re-optimize per fold, evaluate out-of-sample
 uv run ibs walkforward TQQQ --folds 5 --purge 5 --objective cagr
 
-# Live signal for the most recent completed session (BUY / SELL / HOLD)
+# Live signal (BUY / SELL / HOLD) + interactive candlestick page of recent trades
 uv run ibs signal TQQQ
 ```
 
-History defaults to the ticker's **full listing period** (TQQQ: 2010); narrow it with `--start`/`--end`. All plotting commands accept `--save DIR` (write PNGs instead of opening windows) and `--no-plot`. Objectives for `optimize`/`walkforward`: `total_return` (default, Sharpe tiebreak - same ranking as the notebook), `cagr`, `sharpe`, `max_drawdown`, `win_rate`. Note that over a fixed window CAGR and total return rank thresholds identically; CAGR is the right number for comparing *across* windows of different lengths.
+History defaults to the ticker's **full listing period** (TQQQ: 2010); narrow it with `--start`/`--end`. `backtest`/`optimize`/`walkforward` render matplotlib charts, while `signal` builds a self-contained interactive HTML page (Plotly) and opens it in your browser: daily candlesticks and volume for the past year (`--lookback` to change), every entry/exit fill marked with labeled B/S triangles, dashed guide lines and shaded holding spans, range-selector buttons, hover showing the day's OHLC, IBS, volume, and change, plus a light/dark theme toggle that follows your OS preference and remembers your choice. All commands accept `--save DIR` (write files instead of opening anything) and `--no-plot`. Objectives for `optimize`/`walkforward`: `total_return` (default, Sharpe tiebreak - same ranking as the notebook), `cagr`, `sharpe`, `max_drawdown`, `win_rate`. Note that over a fixed window CAGR and total return rank thresholds identically; CAGR is the right number for comparing _across_ windows of different lengths.
 
 ## Python API
 
@@ -78,12 +78,12 @@ print(wf.summary())              # stitched out-of-sample metrics
 
 ### Metrics (as defined in the notebook)
 
-| Metric | Definition |
-|---|---|
+| Metric       | Definition                                                                               |
+| ------------ | ---------------------------------------------------------------------------------------- |
 | Sharpe ratio | `mean(daily returns) / std(ddof=1) * sqrt(252)`, zero risk-free rate, flat days included |
-| Total return | `final capital / initial capital - 1` |
-| Max drawdown | deepest peak-to-trough decline of the equity curve |
-| Win rate | share of *closed* trades whose exit fill beat the entry fill |
+| Total return | `final capital / initial capital - 1`                                                    |
+| Max drawdown | deepest peak-to-trough decline of the equity curve                                       |
+| Win rate     | share of _closed_ trades whose exit fill beat the entry fill                             |
 
 The package additionally reports CAGR, time-in-market, trade count, and final capital.
 
@@ -92,22 +92,22 @@ The package additionally reports CAGR, time-in-market, trade count, and final ca
 The notebook picked its "ideal" thresholds by optimizing over the whole backtest period - an in-sample estimate that flatters results. `walk_forward` addresses that:
 
 1. The first `min_train_frac` (default 50%) of the history seeds the training window; the rest is split into `n_folds` sequential test windows.
-2. For each fold, the threshold grid is re-optimized on all data *before* the test window, minus a `purge_days` gap (default 5 trading days) so boundary fills and still-open positions can't leak information across the split.
+2. For each fold, the threshold grid is re-optimized on all data _before_ the test window, minus a `purge_days` gap (default 5 trading days) so boundary fills and still-open positions can't leak information across the split.
 3. The chosen thresholds are evaluated once on the unseen test window (starting flat), and the per-fold equity segments are compounded into a single out-of-sample curve.
 
 ### Results snapshot (TQQQ, full listing history 2010-02 to 2026-07, checked July 2026)
 
 Default thresholds **entry 0.13 / exit 0.97** - the whole-period CAGR optimum from the grid search:
 
-| Metric | IBS strategy (0.13 / 0.97) | Buy & hold |
-|---|---|---|
-| CAGR | **53.8%** | 42.3% |
-| Total return | +117,387% | +32,748% |
-| Sharpe ratio | 1.10 | 0.89 |
-| Max drawdown | -60.6% | -81.7% |
-| Win rate | 73.6% (155 closed trades) | - |
-| Time in market | 65.0% | 100% |
-| Final capital ($10k start) | $11.75M | $3.28M |
+| Metric                     | IBS strategy (0.13 / 0.97) | Buy & hold |
+| -------------------------- | -------------------------- | ---------- |
+| CAGR                       | **53.8%**                  | 42.3%      |
+| Total return               | +117,387%                  | +32,748%   |
+| Sharpe ratio               | 1.10                       | 0.89       |
+| Max drawdown               | -60.6%                     | -81.7%     |
+| Win rate                   | 73.6% (155 closed trades)  | -          |
+| Time in market             | 65.0%                      | 100%       |
+| Final capital ($10k start) | $11.75M                    | $3.28M     |
 
 - **Purged walk-forward, out-of-sample 2018-04 to 2026-07**: 47.0% CAGR vs 34.8% for buy & hold (Sharpe 0.93, max drawdown -60.5%). The folds independently keep choosing entry 0.13 with exit 0.97-0.99, agreeing with the default, and the strategy sat roughly flat through the 2022 bear while buy & hold collapsed.
 - Engine parity: over the original notebook's window (2020-01 to 2025-07) with its 0.19/0.95 thresholds, the engine reproduces the notebook's reported numbers (Sharpe 1.286 vs 1.283, max drawdown -46.48% vs -46.47%) up to Yahoo's adjusted-price revisions.
@@ -129,6 +129,7 @@ Caveat: the headline row is still fitted in-sample and no commissions or slippag
 │   ├── optimize.py           # grid search + purged walk-forward
 │   ├── visualize.py          # trades, equity, drawdown, heatmap, walk-forward charts
 │   ├── live.py               # realtime BUY/SELL/HOLD signal check
+│   ├── web.py                # interactive candlestick signal page (plotly)
 │   └── cli.py                # `ibs` command
 └── tests/                    # pytest suite (synthetic data, no network)
 ```
