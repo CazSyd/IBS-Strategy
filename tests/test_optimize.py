@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from ibs_strategy.backtest import run_backtest
 from ibs_strategy.optimize import (
     DEFAULT_ENTRY_GRID,
     DEFAULT_EXIT_GRID,
@@ -10,9 +11,38 @@ from ibs_strategy.optimize import (
 )
 
 
-def test_default_grids_match_notebook():
-    assert DEFAULT_ENTRY_GRID.tolist() == pytest.approx(np.arange(0.01, 0.20, 0.02).tolist())
-    assert DEFAULT_EXIT_GRID.tolist() == pytest.approx(np.arange(0.81, 1.00, 0.02).tolist())
+def test_default_grids_are_fine_grained():
+    assert len(DEFAULT_ENTRY_GRID) == 100
+    assert DEFAULT_ENTRY_GRID[0] == pytest.approx(0.002)
+    assert DEFAULT_ENTRY_GRID[-1] == pytest.approx(0.2)
+    assert np.diff(DEFAULT_ENTRY_GRID) == pytest.approx(np.full(99, 0.002))
+    assert len(DEFAULT_EXIT_GRID) == 100
+    assert DEFAULT_EXIT_GRID[0] == pytest.approx(0.8)
+    assert DEFAULT_EXIT_GRID[-1] == pytest.approx(0.998)
+    assert np.diff(DEFAULT_EXIT_GRID) == pytest.approx(np.full(99, 0.002))
+
+
+def test_grid_search_matches_engine_exactly(random_frame, scenario_frame):
+    for entry, exit_ in [(0.05, 0.85), (0.1, 0.9), (0.2, 0.8), (0.13, 0.97)]:
+        row = grid_search(random_frame, [entry], [exit_]).iloc[0]
+        expected = run_backtest(random_frame, entry, exit_).summary()
+        for column in ("sharpe", "total_return", "cagr", "max_drawdown", "win_rate", "num_trades"):
+            assert row[column] == pytest.approx(expected[column], rel=1e-9, abs=1e-12), column
+
+    # covers NaN IBS bars and a position still open at the end of the data
+    row = grid_search(scenario_frame, [0.2], [0.9], initial_capital=1_000.0).iloc[0]
+    expected = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0).summary()
+    for column in ("sharpe", "total_return", "cagr", "max_drawdown", "win_rate", "num_trades"):
+        assert row[column] == pytest.approx(expected[column], rel=1e-9, abs=1e-12), column
+
+
+def test_grid_search_overlapping_thresholds_fall_back(random_frame):
+    # entry > exit means buy and sell signals can fire on the same bar; the
+    # fast latch replay is invalid there, so the exact engine must be used
+    row = grid_search(random_frame, [0.9], [0.5], objective="sharpe").iloc[0]
+    expected = run_backtest(random_frame, 0.9, 0.5).summary()
+    for column in ("sharpe", "total_return", "max_drawdown", "win_rate", "num_trades"):
+        assert row[column] == pytest.approx(expected[column]), column
 
 
 def test_grid_search_covers_grid_and_sorts(random_frame):
