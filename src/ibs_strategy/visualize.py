@@ -199,21 +199,28 @@ def plot_heatmap(
     n_rows, n_cols = values.shape
 
     if ax is None:
-        _, ax = plt.subplots(figsize=(max(6.0, 1.6 + 0.6 * n_cols), max(3.2, 1.2 + 0.42 * n_rows)))
+        width = min(12.0, max(6.0, 1.6 + 0.6 * n_cols))
+        height = min(8.0, max(3.2, 1.2 + 0.42 * n_rows))
+        _, ax = plt.subplots(figsize=(width, height))
     fig = ax.figure
     fig.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
 
     image = ax.imshow(values, cmap=SEQUENTIAL_BLUES, aspect="auto")
-    ax.set_xticks(range(n_cols), [f"{column:g}" for column in table.columns])
-    ax.set_yticks(range(n_rows), [f"{row:g}" for row in table.index])
+    x_step = max(1, int(np.ceil(n_cols / 15)))
+    y_step = max(1, int(np.ceil(n_rows / 15)))
+    x_positions = list(range(0, n_cols, x_step))
+    y_positions = list(range(0, n_rows, y_step))
+    ax.set_xticks(x_positions, [f"{table.columns[i]:g}" for i in x_positions])
+    ax.set_yticks(y_positions, [f"{table.index[i]:g}" for i in y_positions])
     ax.tick_params(colors=INK_MUTED, labelsize=8.5, length=0)
     for spine in ax.spines.values():
         spine.set_visible(False)
-    ax.set_xticks(np.arange(-0.5, n_cols), minor=True)
-    ax.set_yticks(np.arange(-0.5, n_rows), minor=True)
-    ax.grid(which="minor", color=SURFACE, linewidth=1.4)
-    ax.tick_params(which="minor", length=0)
+    if n_cols <= 25 and n_rows <= 25:
+        ax.set_xticks(np.arange(-0.5, n_cols), minor=True)
+        ax.set_yticks(np.arange(-0.5, n_rows), minor=True)
+        ax.grid(which="minor", color=SURFACE, linewidth=1.4)
+        ax.tick_params(which="minor", length=0)
 
     if values.size <= 150:
         vmin, vmax = np.nanmin(values), np.nanmax(values)
