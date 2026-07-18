@@ -12,6 +12,9 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
+# Generated GitHub Pages site (built in CI)
+site/
+
 # Jupyter
 .ipynb_checkpoints/
 
