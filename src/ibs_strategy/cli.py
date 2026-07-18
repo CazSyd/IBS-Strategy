@@ -12,7 +12,7 @@ import pandas as pd
 from . import __version__
 from .backtest import DEFAULT_ENTRY_THRESHOLD, DEFAULT_EXIT_THRESHOLD, run_backtest
 from .data import load_data
-from .live import latest_signal
+from .live import DEFAULT_LOOKBACK_DAYS, latest_signal
 from .metrics import cagr, total_return
 from .optimize import (
     DEFAULT_ENTRY_GRID,
@@ -25,9 +25,9 @@ from .visualize import (
     METRIC_LABELS,
     plot_backtest,
     plot_heatmap,
-    plot_signals,
     plot_walk_forward,
 )
+from .web import open_in_browser, render_signal_page
 
 
 def parse_grid(spec: str) -> np.ndarray:
@@ -172,12 +172,19 @@ def cmd_signal(args) -> None:
         f"  Bar used: {report.bar_date:%Y-%m-%d} | IBS {report.ibs:.3f} | "
         f"entry < {args.entry:g}, exit > {args.exit:g}"
     )
+    if args.no_plot:
+        return
     result = run_backtest(report.data, args.entry, args.exit)
-    ax = plot_signals(
-        result,
-        title=f"{args.ticker} - trades over the last {len(report.data)} sessions",
-    )
-    _emit(ax.figure, args, f"{args.ticker.lower()}_signals.png")
+    if args.save is not None:
+        args.save.mkdir(parents=True, exist_ok=True)
+        path = render_signal_page(
+            result, args.ticker, report, args.save / f"{args.ticker.lower()}_signals.html"
+        )
+        print(f"\nSaved interactive chart to {path}")
+    else:
+        path = render_signal_page(result, args.ticker, report)
+        print(f"\nOpening interactive chart in your browser: {path}")
+        open_in_browser(path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -239,11 +246,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="fraction of history reserved for the first training window (default 0.5)")
     p.set_defaults(func=cmd_walkforward)
 
-    p = sub.add_parser("signal", help="check the live signal for the most recent completed bar")
+    p = sub.add_parser(
+        "signal",
+        help="check the live signal and open an interactive candlestick page of recent trades",
+    )
     p.add_argument("ticker", help="ticker symbol, e.g. TQQQ")
     add_thresholds(p)
-    p.add_argument("--lookback", type=int, default=100,
-                   help="calendar days of history to download (default 100)")
+    p.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK_DAYS,
+                   help="calendar days of history shown in the chart "
+                        f"(default {DEFAULT_LOOKBACK_DAYS})")
     add_output(p)
     p.set_defaults(func=cmd_signal)
 
