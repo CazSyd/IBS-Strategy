@@ -44,7 +44,7 @@ def test_default_thresholds_are_whole_period_optimum():
     from ibs_strategy.backtest import DEFAULT_ENTRY_THRESHOLD, DEFAULT_EXIT_THRESHOLD
 
     assert DEFAULT_ENTRY_THRESHOLD == 0.132
-    assert DEFAULT_EXIT_THRESHOLD == 0.964
+    assert DEFAULT_EXIT_THRESHOLD == 0.965
 
     args = build_parser().parse_args(["backtest", "TQQQ"])
     assert args.entry == DEFAULT_ENTRY_THRESHOLD

@@ -218,9 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_grids(p: argparse.ArgumentParser) -> None:
         p.add_argument("--entry-grid", type=parse_grid, default=None, metavar="A:B:STEP",
-                       help="entry threshold grid (default 0.002:0.202:0.002)")
+                       help="entry threshold grid (default 0.001:0.201:0.001)")
         p.add_argument("--exit-grid", type=parse_grid, default=None, metavar="A:B:STEP",
-                       help="exit threshold grid (default 0.8:1.0:0.002)")
+                       help="exit threshold grid (default 0.8:1.0:0.001)")
         p.add_argument("--objective", choices=OBJECTIVES, default="total_return",
                        help="ranking metric (default total_return, Sharpe tiebreak)")
 

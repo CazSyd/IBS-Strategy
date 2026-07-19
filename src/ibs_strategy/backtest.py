@@ -28,10 +28,10 @@ __all__ = [
 
 REQUIRED_COLUMNS = ("Open", "Close", "IBS")
 
-# Whole-listing-period CAGR optimum on TQQQ (2010-2026) from the 0.002-step
+# Whole-listing-period CAGR optimum on TQQQ (2010-2026) from the 0.001-step
 # grid; the original notebook's in-sample pick was 0.19/0.95.
 DEFAULT_ENTRY_THRESHOLD = 0.132
-DEFAULT_EXIT_THRESHOLD = 0.964
+DEFAULT_EXIT_THRESHOLD = 0.965
 
 
 @dataclass(frozen=True)
