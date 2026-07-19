@@ -21,6 +21,7 @@ from .optimize import (
     grid_search,
     walk_forward,
 )
+from .synthetic import load_extended_data
 from .visualize import (
     METRIC_LABELS,
     plot_backtest,
@@ -92,6 +93,22 @@ def _emit(fig, args, filename: str) -> None:
 
 
 def _load(args) -> pd.DataFrame:
+    if getattr(args, "extend", None):
+        data = load_extended_data(
+            args.ticker,
+            proxy=args.extend,
+            start=args.start,
+            end=args.end,
+            leverage=args.leverage,
+        )
+        synthetic_bars = int(data["Synthetic"].sum())
+        first, last = data.index[0].date(), data.index[-1].date()
+        print(
+            f"{args.ticker}: {len(data)} daily bars, {first} to {last} "
+            f"({synthetic_bars} synthetic pre-listing bars from {args.extend} "
+            f"at {args.leverage:g}x)"
+        )
+        return data
     data = load_data(args.ticker, start=args.start, end=args.end)
     first, last = data.index[0].date(), data.index[-1].date()
     print(f"{args.ticker}: {len(data)} daily bars, {first} to {last}")
@@ -201,6 +218,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="history start date (default: full listing history)")
         p.add_argument("--end", default=None, help="history end date (default: today)")
         p.add_argument("--capital", type=float, default=10_000.0, help="starting capital (default 10000)")
+        p.add_argument("--extend", metavar="PROXY", default=None,
+                       help="prepend synthetic pre-listing history derived from PROXY "
+                            "(e.g. QQQ for TQQQ; costs modeled as 0.95%% ER + T-bill financing)")
+        p.add_argument("--leverage", type=float, default=3.0,
+                       help="daily leverage of the synthetic pre-listing bars (default 3)")
         add_output(p)
 
     def add_output(p: argparse.ArgumentParser) -> None:
