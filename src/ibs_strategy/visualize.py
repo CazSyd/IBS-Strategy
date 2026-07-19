@@ -122,7 +122,12 @@ def plot_signals(
     return ax
 
 
-def plot_equity(result: "BacktestResult", ax: Axes | None = None, title: str | None = None) -> Axes:
+def plot_equity(
+    result: "BacktestResult",
+    ax: Axes | None = None,
+    title: str | None = None,
+    log: bool = False,
+) -> Axes:
     """Strategy equity vs buy & hold, both indexed to 100 at the start."""
     ax = _new_axes(ax, (12, 5))
     data = result.data
@@ -132,6 +137,8 @@ def plot_equity(result: "BacktestResult", ax: Axes | None = None, title: str | N
         market = data["Close"] / data["Close"].iloc[0] * 100
         ax.plot(data.index, market, color=INK_MUTED, linewidth=1.4, label="Buy & hold")
         _legend(ax)
+    if log:
+        ax.set_yscale("log")
     ax.set_ylabel("Value (start = 100)", color=INK_SECONDARY, fontsize=9.5)
     _title(ax, title or "Equity - IBS strategy vs buy & hold")
     return ax
