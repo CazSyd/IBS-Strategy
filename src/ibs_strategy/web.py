@@ -96,8 +96,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <style>
-  :root { --page: #f9f9f7; --chip-bg: #fcfcfb; --chip-ink: #52514e; --chip-border: rgba(11, 11, 11, 0.12); }
-  :root[data-theme="dark"] { --page: #0d0d0d; --chip-bg: #1a1a19; --chip-ink: #c3c2b7; --chip-border: rgba(255, 255, 255, 0.14); }
+  /* page matches the chart's paper color so the plot blends seamlessly */
+  :root { --page: #fcfcfb; --chip-bg: #fcfcfb; --chip-ink: #52514e; --chip-border: rgba(11, 11, 11, 0.12); }
+  :root[data-theme="dark"] { --page: #1a1a19; --chip-bg: #1a1a19; --chip-ink: #c3c2b7; --chip-border: rgba(255, 255, 255, 0.14); }
   html, body { margin: 0; background: var(--page); transition: background 0.2s ease; }
   body { padding: 0 12px 6px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; justify-content: flex-end; padding: 10px 4px 6px; }
