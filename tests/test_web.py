@@ -55,3 +55,8 @@ def test_render_writes_self_contained_html(tmp_path, scenario_frame):
     assert "#1a1a19" in html  # dark surface present in the relayout patch
     assert "prefers-color-scheme" in html
     assert html.count("range-chip") >= 4  # HTML range buttons replace plotly's selector
+    # the range buttons must read plain JSON arrays -- plotly serializes trace
+    # numerics as base64 "bdata" blobs that page JS cannot index
+    assert "var DATA = {" in html
+    assert '"low": [90.0' in html
+    assert '"high": [110.0' in html

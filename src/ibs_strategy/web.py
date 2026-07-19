@@ -136,6 +136,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 (function () {
   var LIGHT = __LIGHT__;
   var DARK = __DARK__;
+  // plain JSON arrays: plotly.py serializes numeric trace data as base64
+  // "bdata" blobs, so chart.data[0].low etc. are NOT indexable in the browser
+  var DATA = __CHART_DATA__;
   var chart = document.getElementById("ibs-chart");
   var toggle = document.getElementById("theme-toggle");
 
@@ -145,29 +148,21 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     try { localStorage.setItem("ibs-theme", theme); } catch (err) {}
     Plotly.relayout(chart, theme === "dark" ? DARK : LIGHT);
   }
-  var saved = null;
-  try { saved = localStorage.getItem("ibs-theme"); } catch (err) {}
-  applyTheme(saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
-  toggle.addEventListener("click", function () {
-    applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
-  });
 
   function setMonths(months, chip) {
-    var candles = chart.data[0];
-    var xs = candles.x;
-    var n = xs.length;
+    var n = DATA.dates.length;
     var update;
     if (!months) {
       update = { "xaxis.autorange": true, "yaxis.autorange": true, "yaxis2.autorange": true };
     } else {
-      var cutoff = new Date(xs[n - 1]);
+      var cutoff = new Date(DATA.dates[n - 1]);
       cutoff.setMonth(cutoff.getMonth() - months);
       var start = n - 1;
-      while (start > 0 && new Date(xs[start - 1]) >= cutoff) { start--; }
+      while (start > 0 && new Date(DATA.dates[start - 1]) >= cutoff) { start--; }
       var lo = Infinity, hi = -Infinity;
       for (var i = start; i < n; i++) {
-        if (candles.low[i] < lo) { lo = candles.low[i]; }
-        if (candles.high[i] > hi) { hi = candles.high[i]; }
+        if (DATA.low[i] < lo) { lo = DATA.low[i]; }
+        if (DATA.high[i] > hi) { hi = DATA.high[i]; }
       }
       if (!isFinite(lo) || !isFinite(hi)) { return; }
       var pad = (hi - lo) * 0.06 || hi * 0.04;
@@ -175,13 +170,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
         "xaxis.range": [start - 0.5, n - 0.5],
         "yaxis.range": [lo - 2.6 * pad, hi + 1.6 * pad]
       };
-      var bars = null;
-      for (var t = 0; t < chart.data.length; t++) {
-        if (chart.data[t].type === "bar") { bars = chart.data[t]; break; }
-      }
-      if (bars) {
+      if (DATA.volume) {
         var volHi = 0;
-        for (var j = start; j < n; j++) { if (bars.y[j] > volHi) { volHi = bars.y[j]; } }
+        for (var j = start; j < n; j++) { if (DATA.volume[j] > volHi) { volHi = DATA.volume[j]; } }
         if (volHi > 0) { update["yaxis2.range"] = [0, volHi * 1.08]; }
       }
     }
@@ -190,23 +181,32 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     for (var c = 0; c < chips.length; c++) { chips[c].classList.remove("active"); }
     if (chip) { chip.classList.add("active"); }
   }
-  var rangeChips = document.querySelectorAll(".range-chip");
-  for (var r = 0; r < rangeChips.length; r++) {
-    rangeChips[r].addEventListener("click", function () {
-      setMonths(parseInt(this.getAttribute("data-months"), 10), this);
-    });
-  }
 
-  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
-    Plotly.relayout(chart, { dragmode: "pan" });
-  }
   function syncLegend() {
     var show = window.innerWidth > 560;
     if (chart._fullLayout && chart._fullLayout.showlegend !== show) {
       Plotly.relayout(chart, { showlegend: show });
     }
   }
+
+  // wire every control before running any initialization that could throw
+  toggle.addEventListener("click", function () {
+    applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+  var rangeChips = document.querySelectorAll(".range-chip");
+  for (var r = 0; r < rangeChips.length; r++) {
+    rangeChips[r].addEventListener("click", function () {
+      setMonths(parseInt(this.getAttribute("data-months"), 10), this);
+    });
+  }
   window.addEventListener("resize", syncLegend);
+
+  var saved = null;
+  try { saved = localStorage.getItem("ibs-theme"); } catch (err) {}
+  applyTheme(saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
+    Plotly.relayout(chart, { dragmode: "pan" });
+  }
   syncLegend();
 })();
 </script>
@@ -478,12 +478,23 @@ def render_signal_page(
         default_height="100%",
         config={"displaylogo": False, "responsive": True},
     )
+    chart_data = {
+        "dates": [_date_str(value) for value in result.data.index],
+        "low": [float(value) for value in result.data["Low"]],
+        "high": [float(value) for value in result.data["High"]],
+        "volume": (
+            [float(value) for value in result.data["Volume"]]
+            if "Volume" in result.data.columns
+            else None
+        ),
+    }
     page = (
         _PAGE_TEMPLATE
         .replace("__TITLE__", f"{ticker} IBS signals")
         .replace("__HEADER_LEFT__", _header_left(result, ticker, report))
         .replace("__LIGHT__", json.dumps(_LIGHT_PATCH))
         .replace("__DARK__", json.dumps(_DARK_PATCH))
+        .replace("__CHART_DATA__", json.dumps(chart_data))
         .replace("__PLOT__", plot_div)
     )
     path.write_text(page, encoding="utf-8")
