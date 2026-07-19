@@ -12,14 +12,14 @@ from ibs_strategy.optimize import (
 
 
 def test_default_grids_are_fine_grained():
-    assert len(DEFAULT_ENTRY_GRID) == 100
-    assert DEFAULT_ENTRY_GRID[0] == pytest.approx(0.002)
+    assert len(DEFAULT_ENTRY_GRID) == 200
+    assert DEFAULT_ENTRY_GRID[0] == pytest.approx(0.001)
     assert DEFAULT_ENTRY_GRID[-1] == pytest.approx(0.2)
-    assert np.diff(DEFAULT_ENTRY_GRID) == pytest.approx(np.full(99, 0.002))
-    assert len(DEFAULT_EXIT_GRID) == 100
+    assert np.diff(DEFAULT_ENTRY_GRID) == pytest.approx(np.full(199, 0.001))
+    assert len(DEFAULT_EXIT_GRID) == 200
     assert DEFAULT_EXIT_GRID[0] == pytest.approx(0.8)
-    assert DEFAULT_EXIT_GRID[-1] == pytest.approx(0.998)
-    assert np.diff(DEFAULT_EXIT_GRID) == pytest.approx(np.full(99, 0.002))
+    assert DEFAULT_EXIT_GRID[-1] == pytest.approx(0.999)
+    assert np.diff(DEFAULT_EXIT_GRID) == pytest.approx(np.full(199, 0.001))
 
 
 def test_grid_search_matches_engine_exactly(random_frame, scenario_frame):
