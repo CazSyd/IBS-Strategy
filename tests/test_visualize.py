@@ -23,6 +23,15 @@ def test_plot_signals_without_trades(scenario_frame):
     plt.close(ax.figure)
 
 
+def test_plot_equity_log_scale(scenario_frame):
+    from ibs_strategy.visualize import plot_equity
+
+    result = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    ax = plot_equity(result, log=True)
+    assert ax.get_yscale() == "log"
+    plt.close(ax.figure)
+
+
 def test_plot_heatmap_smoke(random_frame):
     results = grid_search(random_frame, [0.1, 0.2], [0.8, 0.9])
     ax = plot_heatmap(results)
