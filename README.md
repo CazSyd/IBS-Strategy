@@ -18,8 +18,8 @@ IBS = (Close - Low) / (High - Low)
 
 Values near 0 mean the close sat at the low of the day (oversold), values near 1 at the high (overbought). The strategy is long-only on daily bars:
 
-- **Entry** - if flat and _yesterday's_ IBS < entry threshold (default **0.13**), buy at _today's open_, all-in with whole shares.
-- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.97**), sell at _today's open_.
+- **Entry** - if flat and _yesterday's_ IBS < entry threshold (default **0.132**), buy at _today's open_, all-in with whole shares.
+- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.964**), sell at _today's open_.
 - Equity is marked to market at each close. No commissions or slippage are modeled.
 
 The default thresholds are the CAGR-optimal pair over TQQQ's full listing history (2010-2026, see the results snapshot below); pass `--entry`/`--exit` (or the function arguments) to try others, e.g. the notebook's original 0.19/0.95.
@@ -55,6 +55,8 @@ uv run ibs signal TQQQ
 ```
 
 History defaults to the ticker's **full listing period** (TQQQ: 2010); narrow it with `--start`/`--end`. `backtest`/`optimize`/`walkforward` render matplotlib charts, while `signal` builds a self-contained interactive HTML page (Plotly) and opens it in your browser: daily candlesticks and volume for the past year (`--lookback` to change), every entry/exit fill marked with labeled B/S triangles, dashed guide lines and shaded holding spans, range-selector buttons, hover showing the day's OHLC, IBS, volume, and change, plus a light/dark theme toggle that follows your OS preference and remembers your choice. All commands accept `--save DIR` (write files instead of opening anything) and `--no-plot`. Objectives for `optimize`/`walkforward`: `total_return` (default, Sharpe tiebreak - same ranking as the notebook), `cagr`, `sharpe`, `max_drawdown`, `win_rate`. Note that over a fixed window CAGR and total return rank thresholds identically; CAGR is the right number for comparing _across_ windows of different lengths.
+
+The default grids sweep entry over (0, 0.20] and exit over [0.80, 1.0) in **0.002 steps** - 10,000 pairs, scanned in seconds by a vectorized replay of the backtest engine (identical results to `run_backtest`, verified by tests). Coarser or narrower searches via `--entry-grid`/`--exit-grid A:B:STEP`. Finer grids fit noise more easily, so judge candidates by their walk-forward showing, not the in-sample leaderboard.
 
 ## Python API
 
@@ -99,19 +101,19 @@ The notebook picked its "ideal" thresholds by optimizing over the whole backtest
 
 ### Results snapshot (TQQQ, full listing history 2010-02 to 2026-07, checked July 2026)
 
-Default thresholds **entry 0.13 / exit 0.97** - the whole-period CAGR optimum from the grid search:
+Default thresholds **entry 0.132 / exit 0.964** - the whole-period CAGR optimum from the 0.002-step grid search (the top cells form a coherent plateau around entry 0.128-0.138 / exit 0.964-0.968, not a lone spike):
 
-| Metric                     | IBS strategy (0.13 / 0.97) | Buy & hold |
-| -------------------------- | -------------------------- | ---------- |
-| CAGR                       | **53.8%**                  | 42.3%      |
-| Total return               | +117,387%                  | +32,748%   |
-| Sharpe ratio               | 1.10                       | 0.89       |
-| Max drawdown               | -60.6%                     | -81.7%     |
-| Win rate                   | 73.6% (155 closed trades)  | -          |
-| Time in market             | 65.0%                      | 100%       |
-| Final capital ($10k start) | $11.75M                    | $3.28M     |
+| Metric                     | IBS strategy (0.132 / 0.964) | Buy & hold |
+| -------------------------- | ---------------------------- | ---------- |
+| CAGR                       | **59.9%**                    | 42.3%      |
+| Total return               | +222,181%                    | +32,748%   |
+| Sharpe ratio               | 1.18                         | 0.89       |
+| Max drawdown               | -56.8%                       | -81.7%     |
+| Win rate                   | 74.0% (181 closed trades)    | -          |
+| Time in market             | 61.4%                        | 100%       |
+| Final capital ($10k start) | $22.23M                      | $3.28M     |
 
-- **Purged walk-forward, out-of-sample 2018-04 to 2026-07**: 47.0% CAGR vs 34.8% for buy & hold (Sharpe 0.93, max drawdown -60.5%). The folds independently keep choosing entry 0.13 with exit 0.97-0.99, agreeing with the default, and the strategy sat roughly flat through the 2022 bear while buy & hold collapsed.
+- **Purged walk-forward, out-of-sample 2018-04 to 2026-07** (fine grid re-optimized per fold): 46.5% CAGR vs 34.8% for buy & hold (Sharpe 0.93, max drawdown -61.8%). The recent folds independently converge on entry 0.130-0.132 with exit 0.964, agreeing with the default, and the strategy sat roughly flat through the 2022 bear while buy & hold collapsed.
 - Engine parity: over the original notebook's window (2020-01 to 2025-07) with its 0.19/0.95 thresholds, the engine reproduces the notebook's reported numbers (Sharpe 1.286 vs 1.283, max drawdown -46.48% vs -46.47%) up to Yahoo's adjusted-price revisions.
 
 Caveat: the headline row is still fitted in-sample and no commissions or slippage are modeled - the walk-forward row is the fairer performance estimate.
