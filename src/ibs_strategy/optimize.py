@@ -29,11 +29,11 @@ __all__ = [
     "walk_forward",
 ]
 
-# Fine 0.002-step sweeps over the sensible bands: entry in (0, 0.20], exit in
-# [0.80, 1.0). 10,000 pairs total -- tractable thanks to the vectorized replay
+# Fine 0.001-step sweeps over the sensible bands: entry in (0, 0.20], exit in
+# [0.80, 1.0). 40,000 pairs total -- tractable thanks to the vectorized replay
 # in ``_fast_summary``.
-DEFAULT_ENTRY_GRID: np.ndarray = np.round(0.002 * np.arange(1, 101), 3)
-DEFAULT_EXIT_GRID: np.ndarray = np.round(0.8 + 0.002 * np.arange(0, 100), 3)
+DEFAULT_ENTRY_GRID: np.ndarray = np.round(0.001 * np.arange(1, 201), 3)
+DEFAULT_EXIT_GRID: np.ndarray = np.round(0.8 + 0.001 * np.arange(0, 200), 3)
 
 OBJECTIVES = ("total_return", "cagr", "sharpe", "max_drawdown", "win_rate")
 
