@@ -38,9 +38,10 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   main { max-width: 640px; margin: 0 auto; padding: 48px 20px 32px; }
   h1 { color: var(--ink); font-size: 24px; margin: 0 0 4px; }
   .updated { color: var(--muted); font-size: 13px; margin: 0 0 28px; }
-  a.card { display: flex; align-items: baseline; gap: 14px; padding: 16px 18px;
-           margin: 0 0 12px; background: var(--surface); border: 1px solid var(--border);
-           border-radius: 12px; text-decoration: none; color: var(--ink-2); }
+  a.card { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px;
+           padding: 16px 18px; margin: 0 0 12px; background: var(--surface);
+           border: 1px solid var(--border); border-radius: 12px;
+           text-decoration: none; color: var(--ink-2); }
   a.card:hover { border-color: var(--muted); }
   .ticker { color: var(--ink); font-weight: 700; font-size: 17px; min-width: 64px; }
   .signal { font-weight: 700; }

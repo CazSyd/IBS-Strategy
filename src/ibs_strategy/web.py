@@ -3,8 +3,12 @@
 Renders a self-contained Plotly page (works offline) with daily candles, a
 volume row, prominent entry/exit markers (labeled triangles plus dashed guide
 lines), shaded holding periods, per-day hover showing OHLC, IBS, volume and
-the daily change, and a light/dark theme toggle that follows the OS
-preference and remembers the choice.
+the daily change, HTML range buttons (1M/3M/6M/All) that also refit the
+y-axis, a light/dark theme toggle, and a mobile-friendly full-viewport layout.
+
+The x-axis is a category axis over trading days (with month tick labels
+computed here) rather than a date axis with ``rangebreaks`` -- rangebreaks
+plus range buttons can hang plotly's tick calculator on narrow windows.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import webbrowser
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -48,16 +53,12 @@ _LIGHT_PATCH = {
     "paper_bgcolor": SURFACE,
     "plot_bgcolor": SURFACE,
     "font.color": INK_SECONDARY,
-    "title.font.color": INK,
     "hoverlabel.bgcolor": "#ffffff",
     "hoverlabel.bordercolor": GRIDLINE,
     "hoverlabel.font.color": INK,
     "xaxis.gridcolor": GRIDLINE,
     "xaxis.linecolor": BASELINE,
     "xaxis.spikecolor": INK_MUTED,
-    "xaxis.rangeselector.bgcolor": SURFACE,
-    "xaxis.rangeselector.activecolor": GRIDLINE,
-    "xaxis.rangeselector.font.color": INK_SECONDARY,
     "xaxis2.gridcolor": GRIDLINE,
     "xaxis2.linecolor": BASELINE,
     "xaxis2.spikecolor": INK_MUTED,
@@ -70,16 +71,12 @@ _DARK_PATCH = {
     "paper_bgcolor": DARK_SURFACE,
     "plot_bgcolor": DARK_SURFACE,
     "font.color": DARK_INK_SECONDARY,
-    "title.font.color": DARK_INK,
     "hoverlabel.bgcolor": "#262624",
     "hoverlabel.bordercolor": DARK_BASELINE,
     "hoverlabel.font.color": DARK_INK,
     "xaxis.gridcolor": DARK_GRIDLINE,
     "xaxis.linecolor": DARK_BASELINE,
     "xaxis.spikecolor": INK_MUTED,
-    "xaxis.rangeselector.bgcolor": DARK_SURFACE,
-    "xaxis.rangeselector.activecolor": DARK_BASELINE,
-    "xaxis.rangeselector.font.color": DARK_INK_SECONDARY,
     "xaxis2.gridcolor": DARK_GRIDLINE,
     "xaxis2.linecolor": DARK_BASELINE,
     "xaxis2.spikecolor": INK_MUTED,
@@ -97,38 +94,120 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <title>__TITLE__</title>
 <style>
   /* page matches the chart's paper color so the plot blends seamlessly */
-  :root { --page: #fcfcfb; --chip-bg: #fcfcfb; --chip-ink: #52514e; --chip-border: rgba(11, 11, 11, 0.12); }
-  :root[data-theme="dark"] { --page: #1a1a19; --chip-bg: #1a1a19; --chip-ink: #c3c2b7; --chip-border: rgba(255, 255, 255, 0.14); }
-  html, body { margin: 0; background: var(--page); transition: background 0.2s ease; }
-  body { padding: 0 12px 6px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; justify-content: flex-end; padding: 10px 4px 6px; }
-  #theme-toggle { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--chip-border);
-                  background: var(--chip-bg); color: var(--chip-ink); font: inherit; font-size: 13px;
-                  cursor: pointer; }
-  #theme-toggle:hover { filter: brightness(0.95); }
+  :root { --page: #fcfcfb; --ink: #0b0b0b; --muted: #898781;
+          --chip-bg: #fcfcfb; --chip-ink: #52514e; --chip-border: rgba(11, 11, 11, 0.12); }
+  :root[data-theme="dark"] { --page: #1a1a19; --ink: #ffffff; --muted: #898781;
+          --chip-bg: #1a1a19; --chip-ink: #c3c2b7; --chip-border: rgba(255, 255, 255, 0.14); }
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body { margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+         background: var(--page); transition: background 0.2s ease;
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+           padding: 10px 14px 6px; }
+  .head-left { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  .ticker { font-weight: 700; font-size: 18px; color: var(--ink); }
+  .badge { font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px;
+           border: 1.5px solid currentColor; }
+  .meta { color: var(--muted); font-size: 12.5px; }
+  .head-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .chip { padding: 6px 11px; border-radius: 999px; border: 1px solid var(--chip-border);
+          background: var(--chip-bg); color: var(--chip-ink); font: inherit; font-size: 12.5px;
+          cursor: pointer; }
+  .chip:hover { filter: brightness(0.95); }
+  .range-chip.active { border-color: var(--chip-ink); font-weight: 700; }
+  #chart-wrap { flex: 1 1 auto; min-height: 0; padding: 0 6px 6px; }
+  #chart-wrap > div { height: 100%; }
 </style>
 </head>
 <body>
-<header><button id="theme-toggle" type="button">Dark</button></header>
-__PLOT__
+<header>
+  <div class="head-left">__HEADER_LEFT__</div>
+  <div class="head-right">
+    <button class="chip range-chip" type="button" data-months="1">1M</button>
+    <button class="chip range-chip" type="button" data-months="3">3M</button>
+    <button class="chip range-chip" type="button" data-months="6">6M</button>
+    <button class="chip range-chip active" type="button" data-months="0">All</button>
+    <button id="theme-toggle" class="chip" type="button">Dark</button>
+  </div>
+</header>
+<div id="chart-wrap">__PLOT__</div>
 <script>
 (function () {
   var LIGHT = __LIGHT__;
   var DARK = __DARK__;
   var chart = document.getElementById("ibs-chart");
-  var button = document.getElementById("theme-toggle");
-  function apply(theme) {
+  var toggle = document.getElementById("theme-toggle");
+
+  function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
-    button.textContent = theme === "dark" ? "\\u2600 Light" : "\\u263E Dark";
+    toggle.textContent = theme === "dark" ? "\\u2600 Light" : "\\u263E Dark";
     try { localStorage.setItem("ibs-theme", theme); } catch (err) {}
     Plotly.relayout(chart, theme === "dark" ? DARK : LIGHT);
   }
   var saved = null;
   try { saved = localStorage.getItem("ibs-theme"); } catch (err) {}
-  apply(saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
-  button.addEventListener("click", function () {
-    apply(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  applyTheme(saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  toggle.addEventListener("click", function () {
+    applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
   });
+
+  function setMonths(months, chip) {
+    var candles = chart.data[0];
+    var xs = candles.x;
+    var n = xs.length;
+    var update;
+    if (!months) {
+      update = { "xaxis.autorange": true, "yaxis.autorange": true, "yaxis2.autorange": true };
+    } else {
+      var cutoff = new Date(xs[n - 1]);
+      cutoff.setMonth(cutoff.getMonth() - months);
+      var start = n - 1;
+      while (start > 0 && new Date(xs[start - 1]) >= cutoff) { start--; }
+      var lo = Infinity, hi = -Infinity;
+      for (var i = start; i < n; i++) {
+        if (candles.low[i] < lo) { lo = candles.low[i]; }
+        if (candles.high[i] > hi) { hi = candles.high[i]; }
+      }
+      if (!isFinite(lo) || !isFinite(hi)) { return; }
+      var pad = (hi - lo) * 0.06 || hi * 0.04;
+      update = {
+        "xaxis.range": [start - 0.5, n - 0.5],
+        "yaxis.range": [lo - 2.6 * pad, hi + 1.6 * pad]
+      };
+      var bars = null;
+      for (var t = 0; t < chart.data.length; t++) {
+        if (chart.data[t].type === "bar") { bars = chart.data[t]; break; }
+      }
+      if (bars) {
+        var volHi = 0;
+        for (var j = start; j < n; j++) { if (bars.y[j] > volHi) { volHi = bars.y[j]; } }
+        if (volHi > 0) { update["yaxis2.range"] = [0, volHi * 1.08]; }
+      }
+    }
+    Plotly.relayout(chart, update);
+    var chips = document.querySelectorAll(".range-chip");
+    for (var c = 0; c < chips.length; c++) { chips[c].classList.remove("active"); }
+    if (chip) { chip.classList.add("active"); }
+  }
+  var rangeChips = document.querySelectorAll(".range-chip");
+  for (var r = 0; r < rangeChips.length; r++) {
+    rangeChips[r].addEventListener("click", function () {
+      setMonths(parseInt(this.getAttribute("data-months"), 10), this);
+    });
+  }
+
+  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
+    Plotly.relayout(chart, { dragmode: "pan" });
+  }
+  function syncLegend() {
+    var show = window.innerWidth > 560;
+    if (chart._fullLayout && chart._fullLayout.showlegend !== show) {
+      Plotly.relayout(chart, { showlegend: show });
+    }
+  }
+  window.addEventListener("resize", syncLegend);
+  syncLegend();
 })();
 </script>
 </body>
@@ -141,12 +220,35 @@ def _date_str(value) -> str:
     return value.strftime("%Y-%m-%d") if hasattr(value, "strftime") else str(value)
 
 
+def _month_ticks(index) -> tuple[list[int], list[str]] | None:
+    """First trading day of each month -> (positions, labels), or None without dates."""
+    if not isinstance(index, pd.DatetimeIndex):
+        return None
+    positions: list[int] = []
+    labels: list[str] = []
+    previous = None
+    for i, timestamp in enumerate(index):
+        month = (timestamp.year, timestamp.month)
+        if month != previous:
+            positions.append(i)
+            labels.append(
+                f"{timestamp:%b %Y}" if timestamp.month == 1 or not positions[:-1] else f"{timestamp:%b}"
+            )
+            previous = month
+    return positions, labels
+
+
 def build_signal_figure(
     result: BacktestResult,
     ticker: str,
     report: SignalReport | None = None,
+    include_title: bool = True,
 ) -> go.Figure:
-    """Candlestick chart of ``result.data`` with entry/exit markers."""
+    """Candlestick chart of ``result.data`` with entry/exit markers.
+
+    The signal page passes ``include_title=False`` and shows the same
+    information in its own HTML header instead.
+    """
     data = result.data
     has_volume = "Volume" in data.columns
     dates = [_date_str(value) for value in data.index]
@@ -159,12 +261,31 @@ def build_signal_figure(
         vertical_spacing=0.03,
     )
 
+    # trade fills are folded into the candle hover so the markers themselves can
+    # skip hover -- big markers otherwise steal the unified hover from
+    # neighboring candles
+    trade_notes: dict = {}
+    for trade in result.trades:
+        trade_notes[trade.entry_date] = (
+            f"<span style='color:{BUY_GREEN}'><b>BUY {trade.shares} sh @ "
+            f"{trade.entry_price:.2f}</b></span>"
+        )
+        if trade.exit_date is not None:
+            pct = (trade.return_pct or 0) * 100
+            trade_notes[trade.exit_date] = (
+                f"<span style='color:{SELL_RED}'><b>SELL {trade.shares} sh @ "
+                f"{trade.exit_price:.2f} ({pct:+.1f}%)</b></span>"
+            )
+
     change = (data["Close"].pct_change() * 100).fillna(0)
     hover_text = []
     for i in range(len(data)):
         parts = [f"IBS {data['IBS'].iloc[i]:.3f}", f"Change {change.iloc[i]:+.2f}%"]
         if has_volume:
             parts.append(f"Volume {data['Volume'].iloc[i]:,.0f}")
+        note = trade_notes.get(data.index[i])
+        if note:
+            parts.append(note)
         hover_text.append("<br>".join(parts))
 
     fig.add_trace(
@@ -220,11 +341,10 @@ def build_signal_figure(
                 name="Buy",
                 text=["B"] * len(entries),
                 textposition="bottom center",
-                textfont=dict(size=11, color=BUY_GREEN, weight=700),
-                marker=dict(symbol="triangle-up", size=16, color=BUY_GREEN,
-                            line=dict(color="#ffffff", width=1.5)),
-                customdata=[[trade.shares, trade.entry_price] for trade in entries],
-                hovertemplate="BUY %{customdata[0]:.0f} sh @ %{customdata[1]:.2f}<extra></extra>",
+                textfont=dict(size=10, color=BUY_GREEN, weight=700),
+                marker=dict(symbol="triangle-up", size=12, color=BUY_GREEN,
+                            line=dict(color="#ffffff", width=1.2)),
+                hoverinfo="skip",
             ),
             row=1,
             col=1,
@@ -238,17 +358,10 @@ def build_signal_figure(
                 name="Sell",
                 text=["S"] * len(exits),
                 textposition="top center",
-                textfont=dict(size=11, color=SELL_RED, weight=700),
-                marker=dict(symbol="triangle-down", size=16, color=SELL_RED,
-                            line=dict(color="#ffffff", width=1.5)),
-                customdata=[
-                    [trade.shares, trade.exit_price, (trade.return_pct or 0) * 100]
-                    for trade in exits
-                ],
-                hovertemplate=(
-                    "SELL %{customdata[0]:.0f} sh @ %{customdata[1]:.2f} "
-                    "(%{customdata[2]:+.1f}%)<extra></extra>"
-                ),
+                textfont=dict(size=10, color=SELL_RED, weight=700),
+                marker=dict(symbol="triangle-down", size=12, color=SELL_RED,
+                            line=dict(color="#ffffff", width=1.2)),
+                hoverinfo="skip",
             ),
             row=1,
             col=1,
@@ -271,22 +384,24 @@ def build_signal_figure(
             col=1,
         )
 
-    title = (
-        f"{ticker} - IBS strategy trades "
-        f"<span style='color:{INK_MUTED};font-size:13px'>entry &lt; "
-        f"{result.entry_threshold:g} · exit &gt; {result.exit_threshold:g}</span>"
-    )
-    if report is not None:
-        color = SIGNAL_COLORS.get(report.signal, INK_MUTED)
+    layout_kwargs: dict = {}
+    if include_title:
         title = (
-            f"{ticker}  <span style='color:{color}'><b>{report.signal}</b></span>  "
-            f"<span style='color:{INK_MUTED};font-size:13px'>IBS {report.ibs:.3f} on "
-            f"{report.bar_date:%Y-%m-%d} · entry &lt; {result.entry_threshold:g} · "
-            f"exit &gt; {result.exit_threshold:g}</span>"
+            f"{ticker} - IBS strategy trades "
+            f"<span style='color:{INK_MUTED};font-size:13px'>entry &lt; "
+            f"{result.entry_threshold:g} · exit &gt; {result.exit_threshold:g}</span>"
         )
+        if report is not None:
+            color = SIGNAL_COLORS.get(report.signal, INK_MUTED)
+            title = (
+                f"{ticker}  <span style='color:{color}'><b>{report.signal}</b></span>  "
+                f"<span style='color:{INK_MUTED};font-size:13px'>IBS {report.ibs:.3f} on "
+                f"{report.bar_date:%Y-%m-%d} · entry &lt; {result.entry_threshold:g} · "
+                f"exit &gt; {result.exit_threshold:g}</span>"
+            )
+        layout_kwargs["title"] = dict(text=title, font=dict(color=INK, size=18), x=0.01, xanchor="left")
 
     fig.update_layout(
-        title=dict(text=title, font=dict(color=INK, size=18), x=0.01, xanchor="left"),
         template="plotly_white",
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
@@ -297,41 +412,45 @@ def build_signal_figure(
                         font=dict(color=INK, size=12)),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0,
                     bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=60, r=20, t=90, b=30),
-        height=760,
+        margin=dict(l=10, r=10, t=90 if include_title else 44, b=10),
         xaxis_rangeslider_visible=False,
         bargap=0.15,
+        **layout_kwargs,
     )
     fig.update_xaxes(
+        type="category",
         gridcolor=GRIDLINE,
         linecolor=BASELINE,
+        automargin=True,
         showspikes=True,
         spikecolor=INK_MUTED,
         spikethickness=1,
         spikedash="dot",
         spikemode="across",
-        rangebreaks=[dict(bounds=["sat", "mon"])],
     )
-    fig.update_yaxes(gridcolor=GRIDLINE, linecolor=BASELINE, zeroline=False)
+    ticks = _month_ticks(data.index)
+    if ticks is not None:
+        positions, labels = ticks
+        fig.update_xaxes(tickmode="array", tickvals=positions, ticktext=labels)
+    fig.update_yaxes(gridcolor=GRIDLINE, linecolor=BASELINE, zeroline=False, automargin=True)
     fig.update_yaxes(title_text="Price", row=1, col=1)
     if has_volume:
         fig.update_yaxes(title_text="Volume", tickformat="~s", row=2, col=1)
-    fig.update_xaxes(
-        rangeselector=dict(
-            buttons=[
-                dict(count=1, label="1m", step="month", stepmode="backward"),
-                dict(count=3, label="3m", step="month", stepmode="backward"),
-                dict(count=6, label="6m", step="month", stepmode="backward"),
-                dict(step="all", label="All"),
-            ],
-            bgcolor=SURFACE,
-            activecolor=GRIDLINE,
-            font=dict(color=INK_SECONDARY),
-        ),
-        row=1,
-        col=1,
-    )
     return fig
+
+
+def _header_left(result: BacktestResult, ticker: str, report: SignalReport | None) -> str:
+    thresholds = (
+        f"entry &lt; {result.entry_threshold:g} · exit &gt; {result.exit_threshold:g}"
+    )
+    if report is None:
+        return f'<span class="ticker">{ticker}</span><span class="meta">{thresholds}</span>'
+    color = SIGNAL_COLORS.get(report.signal, INK_MUTED)
+    return (
+        f'<span class="ticker">{ticker}</span>'
+        f'<span class="badge" style="color:{color}">{report.signal}</span>'
+        f'<span class="meta">IBS {report.ibs:.3f} · {report.bar_date:%Y-%m-%d} · {thresholds}</span>'
+    )
 
 
 def render_signal_page(
@@ -342,10 +461,11 @@ def render_signal_page(
 ) -> Path:
     """Write the signal page as a self-contained HTML file and return its path.
 
-    The page embeds plotly.js (works offline) and a light/dark toggle that
+    The page embeds plotly.js (works offline), fills the viewport on any
+    screen size, and carries HTML range buttons plus a light/dark toggle that
     follows the OS color scheme on first load and persists the user's choice.
     """
-    fig = build_signal_figure(result, ticker, report)
+    fig = build_signal_figure(result, ticker, report, include_title=False)
     if path is None:
         path = Path(tempfile.gettempdir()) / f"{ticker.lower()}_ibs_signals.html"
     path = Path(path)
@@ -354,11 +474,14 @@ def render_signal_page(
         full_html=False,
         include_plotlyjs=True,
         div_id="ibs-chart",
-        config={"displaylogo": False},
+        default_width="100%",
+        default_height="100%",
+        config={"displaylogo": False, "responsive": True},
     )
     page = (
         _PAGE_TEMPLATE
         .replace("__TITLE__", f"{ticker} IBS signals")
+        .replace("__HEADER_LEFT__", _header_left(result, ticker, report))
         .replace("__LIGHT__", json.dumps(_LIGHT_PATCH))
         .replace("__DARK__", json.dumps(_DARK_PATCH))
         .replace("__PLOT__", plot_div)
