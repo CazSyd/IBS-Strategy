@@ -17,12 +17,24 @@ def test_figure_has_candles_volume_and_trade_markers(scenario_frame):
     assert buys.mode == "markers+text"
     assert buys.text == ("B", "B")
     assert sells.text == ("S",)
+    # markers are visual only; trade details live in the candle hover so big
+    # markers can't steal the unified hover from neighboring candles
+    assert buys.hoverinfo == "skip"
+    assert sells.hoverinfo == "skip"
 
     # per trade: one holding-span rect + entry guide line (+ exit line if closed)
     assert len(fig.layout.shapes) == 5
 
     candles = next(trace for trace in fig.data if trace.type == "candlestick")
     assert "IBS" in candles.text[0]  # hover carries per-day details
+    assert "BUY 10 sh @ 95.00" in candles.text[1]  # entry day hover
+    assert "SELL 10 sh @ 112.00" in candles.text[4]  # exit day hover
+
+    # category axis with no rangebreaks/rangeselector -- their combination can
+    # hang plotly's tick calculator on narrow windows (the frozen 1m/3m bug)
+    assert fig.layout.xaxis.type == "category"
+    assert not fig.layout.xaxis.rangebreaks
+    assert not fig.layout.xaxis.rangeselector.buttons
 
 
 def test_figure_without_volume_column(scenario_frame):
@@ -42,3 +54,4 @@ def test_render_writes_self_contained_html(tmp_path, scenario_frame):
     assert "theme-toggle" in html  # dark-mode toggle wired in
     assert "#1a1a19" in html  # dark surface present in the relayout patch
     assert "prefers-color-scheme" in html
+    assert html.count("range-chip") >= 4  # HTML range buttons replace plotly's selector
