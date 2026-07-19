@@ -33,6 +33,11 @@ from .optimize import (
     grid_search,
     walk_forward,
 )
+from .synthetic import (
+    extend_with_synthetic,
+    load_extended_data,
+    synthetic_leveraged_ohlc,
+)
 from .visualize import (
     plot_backtest,
     plot_drawdown,
@@ -73,6 +78,9 @@ __all__ = [
     "best_thresholds",
     "grid_search",
     "walk_forward",
+    "extend_with_synthetic",
+    "load_extended_data",
+    "synthetic_leveraged_ohlc",
     "plot_backtest",
     "plot_drawdown",
     "plot_equity",
