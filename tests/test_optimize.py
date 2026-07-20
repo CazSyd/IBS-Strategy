@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from ibs_strategy.backtest import run_backtest
@@ -7,6 +8,8 @@ from ibs_strategy.optimize import (
     DEFAULT_EXIT_GRID,
     best_thresholds,
     grid_search,
+    objective_surface,
+    plateau_thresholds,
     walk_forward,
 )
 
@@ -34,6 +37,52 @@ def test_grid_search_matches_engine_exactly(random_frame, scenario_frame):
     expected = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0).summary()
     for column in ("sharpe", "total_return", "cagr", "max_drawdown", "win_rate", "num_trades"):
         assert row[column] == pytest.approx(expected[column], rel=1e-9, abs=1e-12), column
+
+
+def test_grid_search_matches_engine_exactly_with_cash_interest(random_frame):
+    """The vectorized replay compounds idle cash the same way the loop does."""
+    rate = pd.Series(0.05, index=random_frame.index)
+    for entry, exit_ in [(0.05, 0.85), (0.13, 0.97)]:
+        row = grid_search(random_frame, [entry], [exit_], cash_rate=rate).iloc[0]
+        expected = run_backtest(random_frame, entry, exit_, cash_rate=rate).summary()
+        for column in ("sharpe", "total_return", "cagr", "max_drawdown", "win_rate", "num_trades"):
+            assert row[column] == pytest.approx(expected[column], rel=1e-9, abs=1e-12), column
+
+    # interest must actually change the answer, or the test proves nothing
+    plain = grid_search(random_frame, [0.05], [0.85]).iloc[0]
+    earning = grid_search(random_frame, [0.05], [0.85], cash_rate=rate).iloc[0]
+    assert earning["total_return"] > plain["total_return"]
+
+
+def test_plateau_thresholds_ignores_an_isolated_spike():
+    """A lone noise spike must lose to the centre of a broad, slightly lower plateau."""
+    # index arithmetic, not float comparisons: `abs(0.87 - 0.85) <= 0.02` is
+    # False in binary floating point and would skew the plateau off-centre
+    rows = []
+    for i in range(11):
+        for j in range(11):
+            on_plateau = abs(i - 5) <= 2 and abs(j - 5) <= 2  # 5x5 block of 0.30
+            cagr = 0.30 if on_plateau else 0.10
+            if (i, j) == (10, 10):
+                cagr = 0.45  # taller, but a single cell surrounded by 0.10
+            rows.append({
+                "entry_threshold": round(0.10 + 0.01 * i, 2),
+                "exit_threshold": round(0.80 + 0.01 * j, 2),
+                "cagr": cagr,
+                "sharpe": cagr,
+            })
+    results = pd.DataFrame(rows).sort_values("cagr", ascending=False, ignore_index=True)
+
+    assert best_thresholds(results) == (0.20, 0.90)  # argmax takes the spike
+    assert plateau_thresholds(results, "cagr", radius=0.02) == (0.15, 0.85)
+
+
+def test_objective_surface_is_an_entry_by_exit_grid(random_frame):
+    results = grid_search(random_frame, [0.1, 0.2], [0.8, 0.9], objective="cagr")
+    surface = objective_surface(results, "cagr")
+    assert surface.shape == (2, 2)
+    assert surface.index.tolist() == [0.1, 0.2]
+    assert surface.columns.tolist() == [0.8, 0.9]
 
 
 def test_grid_search_overlapping_thresholds_fall_back(random_frame):

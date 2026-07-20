@@ -231,12 +231,19 @@ def plateau_thresholds(
 ) -> tuple[float, float]:
     """The (entry, exit) pair at the centre of the best *neighbourhood*, not the peak.
 
-    The single best cell of a 40,000-cell grid is the noisiest possible
-    estimator: its value is inflated by whatever sampling luck made it beat
-    39,999 rivals (the winner's curse). Averaging each cell with everything
-    within ``radius`` threshold units and taking the argmax of that smoothed
-    surface instead picks the middle of a broad, genuinely good plateau and
-    ignores isolated spikes -- so the answer barely moves when the data does.
+    A tie-breaker, not a discovery. The single best cell of a 40,000-cell grid
+    is the noisiest possible estimator -- its value is inflated by whatever
+    sampling luck made it beat 39,999 rivals -- so averaging each cell with
+    everything within ``radius`` and taking the argmax of that smoothed surface
+    at least refuses to chase isolated spikes.
+
+    It does NOT recover stable structure, because there is none to recover: fit
+    the surface on the first and second halves of TQQQ's history separately and
+    the two correlate at -0.07, and a fitted peak scoring Sharpe 1.25 in-sample
+    scores 0.30 on the other half. With a standard error near +/-10%/yr on any
+    single cell, the grid cannot resolve neighbouring pairs at all. Prefer round
+    thresholds justified by ``edge.decile_response`` -- which does replicate --
+    over anything selected from this surface's shape.
     """
     surface = objective_surface(results, objective)
     entries = surface.index.to_numpy(dtype=float)

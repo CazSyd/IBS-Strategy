@@ -168,7 +168,8 @@ def cmd_optimize(args) -> None:
         p_entry, p_exit = plateau_thresholds(results, args.objective)
         print(
             f"Plateau centre:  entry {p_entry:g} / exit {p_exit:g}  "
-            "(middle of the best neighbourhood -- steadier than the peak)"
+            "(smoothed tie-break; this surface does not replicate out-of-sample "
+            "-- treat both as one significant digit)"
         )
     print(f"Backtest them with: {follow_up}")
     if len(entry_grid) > 1 or len(exit_grid) > 1:

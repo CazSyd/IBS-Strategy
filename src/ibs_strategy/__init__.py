@@ -13,6 +13,7 @@ from .backtest import (
     run_backtest,
 )
 from .data import compute_ibs, flatten_columns, load_data
+from .edge import decile_response, response_gradient
 from .live import SignalReport, latest_signal, signal_from_frame
 from .metrics import (
     TRADING_DAYS_PER_YEAR,
@@ -76,6 +77,8 @@ __all__ = [
     "Fold",
     "WalkForwardResult",
     "best_thresholds",
+    "decile_response",
+    "response_gradient",
     "grid_search",
     "walk_forward",
     "extend_with_synthetic",

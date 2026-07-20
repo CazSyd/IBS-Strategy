@@ -22,7 +22,7 @@ Values near 0 mean the close sat at the low of the day (oversold), values near 1
 - **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.80**), sell at _today's open_.
 - Equity is marked to market at each close. Idle cash earns the 13-week T-bill; no commissions or slippage are modeled.
 
-The defaults are **crash-aware**: chosen on history that includes the dot-com crash and the GFC, scored by the worse of the Sharpe ratios on TQQQ and SPXL so no single ticker can carry the choice. They are deliberately round, because the surrounding plateau is flat enough that a third digit would encode noise. Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002 - see [Choosing thresholds](#choosing-thresholds-the-plateau-not-the-peak) and the results snapshot. Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
+The defaults are round on purpose, and they are **not** the output of an optimizer. Entry 0.13 fires on the bottom ~12% of days, which is where [essentially all of the measured edge lives](#does-the-signal-actually-predict-anything); exit 0.80 is a deliberate risk choice, favouring crash truncation over bull-market participation. Threshold surfaces cannot justify anything finer - [they do not replicate](#why-the-thresholds-are-not-optimized). Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002. Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
 
 Signals always come from the previous completed bar, so there is no look-ahead. Mean reversion of this kind works best on high-volatility leveraged ETFs such as **TQQQ** and **SPXL**.
 
@@ -84,9 +84,39 @@ print(wf.summary())              # stitched out-of-sample metrics
 
 **Idle cash earns interest.** The notebook implicitly paid 0% on cash, which quietly penalizes any setting that spends time flat - and the crash-aware thresholds sit in cash roughly 70% of the time. `--cash-rate` (default `^IRX`, the 13-week T-bill) accrues a real yield on the cash balance each bar, before that bar's fill, so a fully invested day earns none. Pass `--cash-rate 0` for the notebook's assumption. This matters most in the high-rate 1999-2007 stretch, where cash yielded 3-6.5%.
 
-### Choosing thresholds: the plateau, not the peak
+### Does the signal actually predict anything?
 
-The single best cell of a 40,000-cell grid is the noisiest estimator available - its value is inflated by whatever sampling luck let it beat 39,999 rivals, which is why an in-sample "optimum" routinely delivers about half its advertised CAGR out-of-sample. `plateau_thresholds` (CLI: `--selector plateau`) instead averages each cell with everything within `radius` threshold units and takes the argmax of that smoothed surface, so it lands in the middle of a broad, genuinely good region and ignores isolated spikes. `ibs optimize` prints both the argmax and the plateau centre.
+Grid searches answer "which parameters won on this sample". That turns out to be unanswerable (below), so the prior question has to be settled separately: does a low IBS predict a higher forward return _at all_? `decile_response` pools every bar instead of slicing by parameter - bucket days by IBS, then measure the return of the session a signal would have had you long (buy next open, mark at that close):
+
+Reported by quintile (IBS < ~0.20 versus > ~0.80), because which _decile_ peaks is not stable - the effect crests in decile 1 on the S&P instruments and decile 2 on the Nasdaq ones, a distinction the data cannot support:
+
+| Instrument | Bottom quintile (IBS < 0.20) | Top quintile | Rank corr | Split-half agreement |
+| ---------- | ---------------------------- | ------------ | --------- | -------------------- |
+| TQQQ (3x)  | **+0.395%** (t=2.75)         | -0.106%      | -0.83     | +0.43                |
+| SPXL (3x)  | **+0.222%** (t=2.64)         | -0.100%      | -0.74     | **+0.79**            |
+| QQQ (1x)   | +0.144% (t=3.02)             | -0.037%      | -0.83     | -                    |
+| SPY (1x)   | +0.088% (t=3.05)             | -0.039%      | -0.70     | -                    |
+
+Four properties make this credible where the threshold surface was not. The gradient runs the same direction on all four instruments (rank correlation -0.70 to -0.83). The leveraged versions earn **2.5-2.7x** their underlyings' edge - close to the 3x you would expect from a genuine price effect, and short of it by about the amount leveraged-fund costs and volatility decay should subtract. The effect is present in the plain underlyings, so it is not a leveraged-ETF artifact. And the shape of the curve **replicates across halves of the sample** (+0.43 and +0.79) where the Sharpe surface managed -0.07.
+
+That is the evidence the strategy rests on, and it is what sets entry 0.13 - not an optimizer. The threshold sits inside the region carrying essentially all of the positive forward returns, and anywhere in roughly 0.10-0.20 would do as well.
+
+```python
+from ibs_strategy import decile_response, response_gradient, load_data
+
+response = decile_response(load_data("TQQQ"))
+print(response, response_gradient(response), sep="\n")
+```
+
+Caveats worth keeping attached. The effect lives almost entirely in the bottom quintile - the middle buckets are noise, so this is closer to an extreme-value effect than a smooth dose-response, and the rank correlations partly reflect that. Daily equity returns are fat-tailed enough to flatter t-statistics. The bottom decile on TQQQ is not individually significant (t=1.00); only pooling it with the next decile is. And the **exit** threshold gets no support from this test at all - forward returns in bucket 8 are positive on both S&P instruments, so 0.80 likely exits early. It is justified by drawdown control, not by predictive power.
+
+### Why the thresholds are not optimized
+
+Fitting the Sharpe surface on the first and second halves of the history separately and correlating them gives **-0.07 on TQQQ and -0.01 on SPXL**. The shape of the surface in one half predicts nothing about the other, and a peak scoring Sharpe 1.25 in-sample scores **0.30** on the unseen half.
+
+This is not evidence the strategy is broken - it is evidence the grid cannot be read. The standard error on any single cell's annualized return is about **+/-10.5% on TQQQ** and **+/-6.3% on SPXL**; differences between neighbouring cells run 2-3 points. Even 27 years cannot resolve one threshold pair from another, so the surface has no stable structure to find and anything selected from its shape is a coin flip. It is also why in-sample optima routinely deliver about half their advertised CAGR out-of-sample, and why re-fitting per ticker [made things worse](#extended-history-where-the-defaults-were-actually-chosen).
+
+`plateau_thresholds` (CLI: `--selector plateau`) is therefore a **tie-breaker, not a discovery**: it averages each cell with its neighbours before taking the argmax, so it at least refuses to chase isolated spikes. `ibs optimize` prints it beside the raw argmax to make the gap visible. Neither number deserves three significant digits.
 
 ### Metrics (as defined in the notebook)
 
@@ -201,6 +231,7 @@ One-time setup after pushing: in the repo's **Settings → Pages**, set **Source
 │   ├── backtest.py           # event-driven backtest engine
 │   ├── metrics.py            # notebook metric definitions
 │   ├── optimize.py           # grid search + purged walk-forward
+│   ├── edge.py               # IBS decile forward-return test (does the signal predict?)
 │   ├── synthetic.py          # synthetic pre-listing history (3x QQQ back to 1999)
 │   ├── visualize.py          # trades, equity, drawdown, heatmap, walk-forward charts
 │   ├── live.py               # realtime BUY/SELL/HOLD signal check
