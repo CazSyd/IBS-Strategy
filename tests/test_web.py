@@ -60,3 +60,15 @@ def test_render_writes_self_contained_html(tmp_path, scenario_frame):
     assert "var DATA = {" in html
     assert '"low": [90.0' in html
     assert '"high": [110.0' in html
+    assert '"pad":' in html  # marker offset for the y-window padding
+
+    # the subplot x-axes are a `matches` pair: a range set on only one member,
+    # or an `autorange: true` restore, is silently overridden by the group's
+    # autorange enforcement -- the buttons must pin explicit ranges on BOTH
+    # x-axes (verified in a real browser; pytest can only pin the emitted JS)
+    assert '"xaxis2.range"' in html
+    assert '"xaxis.autorange": false' in html
+    assert '"xaxis.autorange": true' not in html
+
+    # phones start zoomed to 3 months -- a year of candles is unreadable there
+    assert "setMonths(3, document.querySelector" in html
