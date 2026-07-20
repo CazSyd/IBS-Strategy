@@ -9,6 +9,11 @@ y-axis, a light/dark theme toggle, and a mobile-friendly full-viewport layout.
 The x-axis is a category axis over trading days (with month tick labels
 computed here) rather than a date axis with ``rangebreaks`` -- rangebreaks
 plus range buttons can hang plotly's tick calculator on narrow windows.
+
+The range buttons always relayout *explicit* ranges on all four axes with
+``autorange: false`` pinned on both x-axes: the subplot x-axes form a
+``matches`` pair, and a range set on one member (or an ``autorange: true``
+restore) is silently overridden by the group's autorange enforcement.
 """
 
 from __future__ import annotations
@@ -90,7 +95,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>__TITLE__</title>
 <style>
   /* page matches the chart's paper color so the plot blends seamlessly */
@@ -101,6 +106,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   * { box-sizing: border-box; }
   html { height: 100%; }
   body { margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+         padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
          background: var(--page); transition: background 0.2s ease;
          font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
@@ -113,11 +119,22 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   .head-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
   .chip { padding: 6px 11px; border-radius: 999px; border: 1px solid var(--chip-border);
           background: var(--chip-bg); color: var(--chip-ink); font: inherit; font-size: 12.5px;
-          cursor: pointer; }
-  .chip:hover { filter: brightness(0.95); }
+          cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .range-chip.active { border-color: var(--chip-ink); font-weight: 700; }
   #chart-wrap { flex: 1 1 auto; min-height: 0; padding: 0 6px 6px; }
   #chart-wrap > div { height: 100%; }
+  @media (hover: hover) { .chip:hover { filter: brightness(0.95); } }
+  /* touch screens: finger-sized chips, and no modebar -- it costs a whole row
+     of chart height for zoom/pan controls that pinch and drag already do */
+  @media (pointer: coarse) {
+    .chip { padding: 9px 15px; font-size: 14px; }
+    .modebar { display: none !important; }
+  }
+  @media (max-width: 560px) {
+    header { padding: 8px 10px 4px; gap: 6px 10px; }
+    .ticker { font-size: 16px; }
+    .meta { font-size: 11.5px; }
+  }
 </style>
 </head>
 <body>
@@ -141,6 +158,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   var DATA = __CHART_DATA__;
   var chart = document.getElementById("ibs-chart");
   var toggle = document.getElementById("theme-toggle");
+  var N = DATA.dates.length;
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
@@ -149,32 +169,80 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     Plotly.relayout(chart, theme === "dark" ? DARK : LIGHT);
   }
 
-  function setMonths(months, chip) {
-    var n = DATA.dates.length;
-    var update;
-    if (!months) {
-      update = { "xaxis.autorange": true, "yaxis.autorange": true, "yaxis2.autorange": true };
+  function monthNum(i) { return +DATA.dates[i].slice(5, 7); }
+
+  function ticksFor(start) {
+    // adaptive tick labels for the visible window: day-level when zoomed in,
+    // month starts otherwise, strided so labels never crowd a narrow screen
+    var win = N - start, vals = [], text = [], i;
+    if (win <= 45) {
+      var step = Math.max(1, Math.round(win / 6));
+      for (i = start; i < N; i += step) {
+        vals.push(i);
+        text.push(MONTHS[monthNum(i) - 1] + " " + (+DATA.dates[i].slice(8, 10)));
+      }
     } else {
-      var cutoff = new Date(DATA.dates[n - 1]);
-      cutoff.setMonth(cutoff.getMonth() - months);
-      var start = n - 1;
-      while (start > 0 && new Date(DATA.dates[start - 1]) >= cutoff) { start--; }
-      var lo = Infinity, hi = -Infinity;
-      for (var i = start; i < n; i++) {
-        if (DATA.low[i] < lo) { lo = DATA.low[i]; }
-        if (DATA.high[i] > hi) { hi = DATA.high[i]; }
+      var mv = [], mt = [], prev = null;
+      for (i = start; i < N; i++) {
+        var key = DATA.dates[i].slice(0, 7);
+        if (key !== prev) {
+          mv.push(i);
+          mt.push(prev === null || monthNum(i) === 1
+                  ? MONTHS[monthNum(i) - 1] + " " + DATA.dates[i].slice(0, 4)
+                  : MONTHS[monthNum(i) - 1]);
+          prev = key;
+        }
       }
-      if (!isFinite(lo) || !isFinite(hi)) { return; }
-      var pad = (hi - lo) * 0.06 || hi * 0.04;
-      update = {
-        "xaxis.range": [start - 0.5, n - 0.5],
-        "yaxis.range": [lo - 2.6 * pad, hi + 1.6 * pad]
-      };
-      if (DATA.volume) {
-        var volHi = 0;
-        for (var j = start; j < n; j++) { if (DATA.volume[j] > volHi) { volHi = DATA.volume[j]; } }
-        if (volHi > 0) { update["yaxis2.range"] = [0, volHi * 1.08]; }
-      }
+      var stride = Math.ceil(mv.length / (window.innerWidth < 560 ? 7 : 14));
+      for (i = 0; i < mv.length; i += stride) { vals.push(mv[i]); text.push(mt[i]); }
+    }
+    return { vals: vals, text: text };
+  }
+
+  function setMonths(months, chip) {
+    // Explicit ranges on every axis, every time. The two subplot x-axes are a
+    // `matches` pair: a range set on one member without autorange pinned false
+    // on BOTH is overridden by the group's autorange enforcement on the next
+    // redraw (the old "buttons do nothing to x" bug), and `autorange: true`
+    // restores are equally unreliable on matched axes -- so "All" is an
+    // explicit full-index window too, never an autorange call.
+    var start = 0;
+    if (months) {
+      var last = DATA.dates[N - 1];
+      var y = +last.slice(0, 4), m = +last.slice(5, 7) - months;
+      while (m < 1) { m += 12; y -= 1; }
+      var cutoff = y + "-" + (m < 10 ? "0" + m : "" + m) + last.slice(7);
+      start = N - 1;
+      while (start > 0 && DATA.dates[start - 1] >= cutoff) { start -= 1; }
+    }
+    var lo = Infinity, hi = -Infinity;
+    for (var i = start; i < N; i++) {
+      if (DATA.low[i] < lo) { lo = DATA.low[i]; }
+      if (DATA.high[i] > hi) { hi = DATA.high[i]; }
+    }
+    if (!isFinite(lo) || !isFinite(hi)) { return; }
+    var pad = (hi - lo) * 0.06 || hi * 0.04 || 1;
+    var markerPad = (DATA.pad || 0) * 1.9;  // keep B/S triangles + letters visible
+    var ticks = ticksFor(start);
+    var update = {
+      "xaxis.range": [start - 0.5, N - 0.5],
+      "xaxis.autorange": false,
+      "xaxis.tickvals": ticks.vals,
+      "xaxis.ticktext": ticks.text,
+      "yaxis.range": [Math.min(lo - 2.6 * pad, lo - markerPad),
+                      Math.max(hi + 1.6 * pad, hi + markerPad)],
+      "yaxis.autorange": false
+    };
+    if (chart._fullLayout && chart._fullLayout.xaxis2) {
+      update["xaxis2.range"] = update["xaxis.range"];
+      update["xaxis2.autorange"] = false;
+      update["xaxis2.tickvals"] = ticks.vals;
+      update["xaxis2.ticktext"] = ticks.text;
+    }
+    if (DATA.volume && chart._fullLayout && chart._fullLayout.yaxis2) {
+      var volHi = 0;
+      for (var j = start; j < N; j++) { if (DATA.volume[j] > volHi) { volHi = DATA.volume[j]; } }
+      if (volHi > 0) { update["yaxis2.range"] = [0, volHi * 1.08]; }
     }
     Plotly.relayout(chart, update);
     var chips = document.querySelectorAll(".range-chip");
@@ -205,9 +273,15 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   try { saved = localStorage.getItem("ibs-theme"); } catch (err) {}
   applyTheme(saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
-    Plotly.relayout(chart, { dragmode: "pan" });
+    Plotly.relayout(chart, { dragmode: "pan", hoverdistance: 30 });
   }
   syncLegend();
+  if (window.innerWidth < 700) {
+    // the top margin only exists to clear the legend, which is hidden here
+    Plotly.relayout(chart, { "margin.t": 8 });
+    // a year of candles is unreadable on a phone -- start zoomed to 3 months
+    setMonths(3, document.querySelector('.range-chip[data-months="3"]'));
+  }
 })();
 </script>
 </body>
@@ -218,6 +292,15 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 def _date_str(value) -> str:
     """ISO date string for plotly x-values (keeps the figure JSON-serializable)."""
     return value.strftime("%Y-%m-%d") if hasattr(value, "strftime") else str(value)
+
+
+def _marker_pad(data: pd.DataFrame) -> float:
+    """Vertical offset that keeps B/S triangles clear of their candles."""
+    ranges = (data["High"] - data["Low"]).to_numpy(dtype=float)
+    pad = float(np.nanmedian(ranges))
+    if not np.isfinite(pad) or pad == 0:
+        pad = float(data["Close"].iloc[-1]) * 0.01
+    return pad
 
 
 def _month_ticks(index) -> tuple[list[int], list[str]] | None:
@@ -325,10 +408,7 @@ def build_signal_figure(
             )
 
     # marker offset so triangles sit just outside the candle they belong to
-    ranges = (data["High"] - data["Low"]).to_numpy(dtype=float)
-    pad = float(np.nanmedian(ranges))
-    if not np.isfinite(pad) or pad == 0:
-        pad = float(data["Close"].iloc[-1]) * 0.01
+    pad = _marker_pad(data)
 
     entries = result.trades
     exits = [trade for trade in result.trades if not trade.is_open]
@@ -487,6 +567,9 @@ def render_signal_page(
             if "Volume" in result.data.columns
             else None
         ),
+        # marker offset actually used by the figure, so the range buttons can
+        # pad the y window enough to keep B/S triangles visible
+        "pad": 0.9 * _marker_pad(result.data),
     }
     page = (
         _PAGE_TEMPLATE
