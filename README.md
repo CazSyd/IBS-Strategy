@@ -22,7 +22,7 @@ Values near 0 mean the close sat at the low of the day (oversold), values near 1
 - **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.80**), sell at _today's open_.
 - Equity is marked to market at each close. Idle cash earns the 13-week T-bill; no commissions or slippage are modeled.
 
-The defaults are round on purpose, and they are **not** the output of an optimizer. Entry 0.13 fires on the bottom ~12% of days, which is where [essentially all of the measured edge lives](#does-the-signal-actually-predict-anything); exit 0.80 is a deliberate risk choice, favouring crash truncation over bull-market participation. Threshold surfaces cannot justify anything finer - [they do not replicate](#why-the-thresholds-are-not-optimized). Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002. Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
+The defaults are round on purpose, and they are **not** the output of an optimizer. Entry 0.13 fires on the bottom ~12% of days, which is where [essentially all of the measured edge lives](#does-the-signal-actually-predict-anything); exit 0.80 is a deliberate risk choice, favouring crash truncation over bull-market participation. Threshold surfaces cannot justify anything finer - [they do not replicate](#why-the-thresholds-are-not-optimized). Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002. The popular 200-day-SMA overlay does not help either - [it removes the edge, not the risk](#where-the-edge-lives-below-the-200-day-sma). Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
 
 Signals always come from the previous completed bar, so there is no look-ahead. Mean reversion of this kind works best on high-volatility leveraged ETFs such as **TQQQ** and **SPXL**.
 
@@ -67,7 +67,7 @@ from ibs_strategy import load_data, run_backtest, grid_search, walk_forward, plo
 
 data = load_data("TQQQ")  # full listing history; pass start/end to narrow
 
-result = run_backtest(data)      # defaults: entry 0.13 / exit 0.97
+result = run_backtest(data)      # defaults: entry 0.13 / exit 0.80
 print(result.summary())          # sharpe, total_return, cagr, max_drawdown, win_rate, ...
 plot_backtest(result, ticker="TQQQ")
 
@@ -83,6 +83,8 @@ print(wf.summary())              # stitched out-of-sample metrics
 `run_backtest` is a faithful port of the notebook's event-driven loop: previous-bar IBS signal, next-open fill, all-in whole-share sizing (leftover cash stays uninvested), one position at a time, strict threshold comparisons. Bars where `High == Low` have undefined IBS and never signal.
 
 **Idle cash earns interest.** The notebook implicitly paid 0% on cash, which quietly penalizes any setting that spends time flat - and the crash-aware thresholds sit in cash roughly 70% of the time. `--cash-rate` (default `^IRX`, the 13-week T-bill) accrues a real yield on the cash balance each bar, before that bar's fill, so a fully invested day earns none. Pass `--cash-rate 0` for the notebook's assumption. This matters most in the high-rate 1999-2007 stretch, where cash yielded 3-6.5%.
+
+**Optional regime gate.** `run_backtest(..., regime=flags)` blocks entries while a boolean Series is off, and `regime_exit=True` additionally liquidates at the next open once it turns off - with the same previous-bar, no-look-ahead timing as the IBS signal. It exists to *test* overlays such as the 200-day SMA, which is how we learned that [the filter removes the edge rather than the risk](#where-the-edge-lives-below-the-200-day-sma). There is deliberately no CLI flag for it.
 
 ### Does the signal actually predict anything?
 
@@ -109,6 +111,33 @@ print(response, response_gradient(response), sep="\n")
 ```
 
 Caveats worth keeping attached. The effect lives almost entirely in the bottom quintile - the middle buckets are noise, so this is closer to an extreme-value effect than a smooth dose-response, and the rank correlations partly reflect that. Daily equity returns are fat-tailed enough to flatter t-statistics. The bottom decile on TQQQ is not individually significant (t=1.00); only pooling it with the next decile is. And the **exit** threshold gets no support from this test at all - forward returns in bucket 8 are positive on both S&P instruments, so 0.80 likely exits early. It is justified by drawdown control, not by predictive power.
+
+### Where the edge lives: below the 200-day SMA
+
+Splitting the same test by regime - is the underlying index above or below its 200-day SMA? - localizes the effect completely. Mean next-session open->close return of bottom-quintile-IBS days (SMA on `^NDX` for the Nasdaq pair, `^GSPC` for the S&P pair, flag read at the prior close):
+
+| Instrument       | Above the 200-day SMA | Below the 200-day SMA |
+| ---------------- | --------------------- | --------------------- |
+| TQQQ (3x, 1999+) | +0.035% (t=0.28)      | **+1.047%** (t=3.14)  |
+| SPXL (3x, 1993+) | +0.055% (t=0.69)      | **+0.551%** (t=2.83)  |
+| QQQ (1x)         | +0.019% (t=0.45)      | **+0.369%** (t=3.36)  |
+| SPY (1x)         | +0.016% (t=0.61)      | **+0.226%** (t=3.38)  |
+
+Above the SMA the edge is statistically zero on every instrument; below it, it is large and significant on every instrument. Buying panic closes is a *downtrend* phenomenon: only about a third of signal days occur below the SMA, and they carry essentially all of the measured edge. The above-SMA trades still made money historically - but that is drift capture a plain holding would have earned anyway, not mean reversion.
+
+This kills the most popular "fix" for the strategy's crash exposure before it starts. Gating entries with the 200-day SMA keeps exactly the trades with no edge and discards exactly the ones with all of it: on extended TQQQ history the gate cuts CAGR from 31.3% to 14.7% and *lowers* Sharpe from 0.77 to 0.58, paying for its smaller drawdown (-52.5% vs -78.4%) with most of the return. The direction replicates in all four half-samples on both tickers, and a length sweep is near-monotone - the longer (weaker) the SMA, the better the result, i.e. the data asks for less filter all the way to none. Forcing an exit on the SMA cross is worse still (it sells into holes the IBS exit rides out for a day), and pure 200-SMA timing of the 3x fund - the overlay's home turf - went through the dot-com crash at **-94.5%**: the index falls 25-30% before the cross triggers, which is -60%+ at 3x, and the summer-2000 bear rally re-crossed the SMA just in time for the next leg down. The one configuration the SMA genuinely rescues is the patient 0.965 exit (forced regime exit turns its -99.2% into -75.8% at no CAGR cost), which only proves the point: the SMA is a months-slow implementation of what the 0.80 exit already does in days.
+
+The uncomfortable conclusion: **the edge and the crash risk are the same trades.** The premium comes from buying panic in downtrends, which is also the only place a crash can catch the strategy. No trend filter can remove the tail without removing the return - position size and leverage choice are the only levers that actually control it.
+
+```python
+from ibs_strategy import load_data
+
+data, index = load_data("QQQ"), load_data("^NDX")["Close"]
+above = (index > index.rolling(200).mean()).reindex(data.index).ffill()
+forward = (data["Close"] / data["Open"] - 1).shift(-1)
+signal = data["IBS"] <= data["IBS"].quantile(0.2)
+print(forward[signal & above].mean(), forward[signal & ~above].mean())
+```
 
 ### Why the thresholds are not optimized
 
@@ -145,7 +174,7 @@ TQQQ only lists from 2010-02, so its real history misses the dot-com crash. `--e
 - Daily costs: 0.95%/yr expense ratio plus **financing of the borrowed 2x exposure** at the 13-week T-bill yield (`^IRX`) + a 0.5%/yr swap spread, deducted uniformly across each bar. The spread is calibrated on the 2010-2026 overlap, where the model tracks real TQQQ to **+0.07%/yr CAGR drift at 0.9989 daily-return correlation**; skipping the financing leg (as naive 3x reconstructions do) would overshoot by ~5.7%/yr.
 - The path is scaled so the seam overnight move into the first real bar equals the modeled 3x proxy move, and a boolean `Synthetic` column marks reconstructed bars.
 
-Caveats: the synthetic era has no tracking error, spreads, or intraday-rebalancing effects, and its volume is the proxy's. The package defaults are chosen on this extended history, because a 3x fund's defining risk is a crash that its own listing history happens not to contain.
+Caveats: the synthetic era has no tracking error, spreads, or intraday-rebalancing effects, and its volume is the proxy's. It also assumes the *wrapper* survives the period: no 3x equity ETF existed before 2008, and sponsors have closed or deleveraged leveraged products mid-crisis (the 2018 inverse-vol terminations, 2020's closures and 3x-to-2x conversions) - though drawdown alone does not force a closure, as SQQQ's >99.99% lifetime decline behind routine reverse splits shows. A holder liquidated near the 2002 bottom would have realized the -99.98% permanently instead of recovering with the index; the strategy is less exposed (days-long holds, and the signals are the index's, not the wrapper's), but a mid-crash leverage cut would quietly break the 3x assumption. The package defaults are chosen on this extended history, because a 3x fund's defining risk is a crash that its own listing history happens not to contain.
 
 ### Results snapshot (TQQQ, real listing history 2010-02 to 2026-07, checked July 2026)
 
