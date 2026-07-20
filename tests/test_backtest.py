@@ -3,7 +3,42 @@ import pandas as pd
 import pytest
 from conftest import make_ohlc
 
-from ibs_strategy.backtest import run_backtest
+from ibs_strategy.backtest import cash_growth_factors, run_backtest
+
+
+def test_cash_rate_accrues_only_on_idle_cash(scenario_frame):
+    """A 2.52%/yr rate is exactly 1bp per trading bar (252 bars/yr)."""
+    rate = 0.0252
+    plain = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    earning = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, cash_rate=rate)
+
+    # bar 0 predates any accrual; bar 1 is the first entry, funded by cash that
+    # earned one bar of interest: 1000 * 1.0001 = 1000.10 buys the same 10 shares
+    assert earning.equity.iloc[0] == 1_000.0
+    assert earning.data["Cash"].iloc[1] == pytest.approx(1_000.0 * 1.0001 - 950.0)
+    assert earning.data["Shares"].tolist() == plain.data["Shares"].tolist()
+
+    # every later bar compounds the leftover cash, so equity strictly improves
+    assert (earning.equity.iloc[1:].to_numpy() > plain.equity.iloc[1:].to_numpy()).all()
+
+    # a scalar rate and a constant Series must agree exactly
+    series = pd.Series(rate, index=scenario_frame.index)
+    assert run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, cash_rate=series).equity.tolist() == (
+        earning.equity.tolist()
+    )
+
+
+def test_cash_growth_factors_shape_and_defaults(scenario_frame):
+    assert cash_growth_factors(scenario_frame, None).tolist() == [1.0] * len(scenario_frame)
+    factors = cash_growth_factors(scenario_frame, 0.252)
+    assert factors[0] == 1.0  # interest accrues between bars, not on bar 0
+    assert factors[1] == pytest.approx(1.001)
+
+    # a sparse series (rates skip market holidays) forward fills onto the bars
+    sparse = pd.Series([0.0252], index=scenario_frame.index[:1])
+    assert cash_growth_factors(scenario_frame, sparse)[1:].tolist() == pytest.approx(
+        [1.0001] * (len(scenario_frame) - 1)
+    )
 
 
 def test_scenario_equity_and_trades(scenario_frame):

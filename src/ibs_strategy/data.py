@@ -5,7 +5,9 @@ from __future__ import annotations
 import pandas as pd
 import yfinance as yf
 
-__all__ = ["compute_ibs", "flatten_columns", "load_data"]
+__all__ = ["CASH_RATE_TICKER", "compute_ibs", "flatten_columns", "load_cash_rate", "load_data"]
+
+CASH_RATE_TICKER = "^IRX"  # 13-week T-bill yield, quoted in percent
 
 
 def compute_ibs(data: pd.DataFrame) -> pd.Series:
@@ -63,3 +65,11 @@ def load_data(
     data = flatten_columns(data)
     data["IBS"] = compute_ibs(data)
     return data
+
+
+def load_cash_rate(
+    ticker: str = CASH_RATE_TICKER,
+    end: str | None = None,
+) -> pd.Series:
+    """Annualized yield on idle cash as a decimal (``^IRX`` quotes percent)."""
+    return load_data(ticker, end=end)["Close"] / 100.0

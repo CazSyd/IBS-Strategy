@@ -8,7 +8,13 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .backtest import REQUIRED_COLUMNS, BacktestResult, Trade, run_backtest
+from .backtest import (
+    REQUIRED_COLUMNS,
+    BacktestResult,
+    Trade,
+    cash_growth_factors,
+    run_backtest,
+)
 from .metrics import (
     TRADING_DAYS_PER_YEAR,
     cagr,
@@ -24,6 +30,8 @@ __all__ = [
     "OBJECTIVES",
     "grid_search",
     "best_thresholds",
+    "objective_surface",
+    "plateau_thresholds",
     "Fold",
     "WalkForwardResult",
     "walk_forward",
@@ -51,24 +59,31 @@ _RESULT_COLUMNS = [
 MIN_TRAIN_BARS = 30
 
 
-def _fast_inputs(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+def _fast_inputs(
+    data: pd.DataFrame,
+    cash_rate: pd.Series | float | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     open_prices = data["Open"].to_numpy(dtype=float)
     close_prices = data["Close"].to_numpy(dtype=float)
     ibs = data["IBS"].to_numpy(dtype=float)
     prev_ibs = np.empty_like(ibs)
     prev_ibs[0] = np.nan
     prev_ibs[1:] = ibs[:-1]
+    # cumulative cash growth: cash at bar j compounded from bar i is
+    # cash * cum[j] / cum[i], which turns each flat/held stretch into a slice
+    cum_cash = np.cumprod(cash_growth_factors(data, cash_rate))
     if isinstance(data.index, pd.DatetimeIndex):
         years = (data.index[-1] - data.index[0]).days / 365.25
     else:
         years = (len(data) - 1) / TRADING_DAYS_PER_YEAR
-    return open_prices, close_prices, prev_ibs, years
+    return open_prices, close_prices, prev_ibs, cum_cash, years
 
 
 def _fast_summary(
     open_prices: np.ndarray,
     close_prices: np.ndarray,
     prev_ibs: np.ndarray,
+    cum_cash: np.ndarray,
     years: float,
     entry_threshold: float,
     exit_threshold: float,
@@ -102,21 +117,28 @@ def _fast_summary(
     segment_start = 0
     for k, entry_bar in enumerate(entry_bars):
         exit_bar = int(exit_bars[k]) if k < exit_bars.size else n
-        shares = int(cash // open_prices[entry_bar])
+        # cash accrues on every bar, in position or not, exactly as the engine does
+        cash_at_entry = cash * cum_cash[entry_bar] / cum_cash[segment_start]
+        shares = int(cash_at_entry // open_prices[entry_bar])
         if shares == 0:
             return None
-        cash_curve[segment_start:entry_bar] = cash
-        cash -= shares * open_prices[entry_bar]
-        cash_curve[entry_bar:exit_bar] = cash
+        cash_curve[segment_start:entry_bar] = (
+            cash * cum_cash[segment_start:entry_bar] / cum_cash[segment_start]
+        )
+        cash = cash_at_entry - shares * open_prices[entry_bar]
+        cash_curve[entry_bar:exit_bar] = (
+            cash * cum_cash[entry_bar:exit_bar] / cum_cash[entry_bar]
+        )
         shares_curve[entry_bar:exit_bar] = shares
         if exit_bar == n:
             segment_start = n
             break
         if open_prices[exit_bar] > open_prices[entry_bar]:
             wins += 1
-        cash += shares * open_prices[exit_bar]
+        cash = cash * cum_cash[exit_bar] / cum_cash[entry_bar] + shares * open_prices[exit_bar]
         segment_start = exit_bar
-    cash_curve[segment_start:] = cash
+    if segment_start < n:  # skipped when a position is still open at the last bar
+        cash_curve[segment_start:] = cash * cum_cash[segment_start:] / cum_cash[segment_start]
 
     equity = cash_curve + shares_curve * close_prices
     returns = np.empty(n, dtype=float)
@@ -147,6 +169,7 @@ def grid_search(
     exit_grid: np.ndarray | None = None,
     objective: str = "total_return",
     initial_capital: float = 10_000.0,
+    cash_rate: pd.Series | float | None = None,
 ) -> pd.DataFrame:
     """Backtest every (entry, exit) pair and rank the results, best row first.
 
@@ -168,18 +191,20 @@ def grid_search(
     entry_grid = DEFAULT_ENTRY_GRID if entry_grid is None else np.asarray(entry_grid, dtype=float)
     exit_grid = DEFAULT_EXIT_GRID if exit_grid is None else np.asarray(exit_grid, dtype=float)
 
-    open_prices, close_prices, prev_ibs, years = _fast_inputs(data)
+    open_prices, close_prices, prev_ibs, cum_cash, years = _fast_inputs(data, cash_rate)
     rows = []
     for entry_threshold in entry_grid:
         for exit_threshold in exit_grid:
             summary = None
             if entry_threshold <= exit_threshold:
                 summary = _fast_summary(
-                    open_prices, close_prices, prev_ibs, years,
+                    open_prices, close_prices, prev_ibs, cum_cash, years,
                     entry_threshold, exit_threshold, initial_capital,
                 )
             if summary is None:
-                full = run_backtest(data, entry_threshold, exit_threshold, initial_capital).summary()
+                full = run_backtest(
+                    data, entry_threshold, exit_threshold, initial_capital, cash_rate
+                ).summary()
                 summary = {column: full[column] for column in _RESULT_COLUMNS}
             rows.append(summary)
 
@@ -192,6 +217,67 @@ def best_thresholds(results: pd.DataFrame) -> tuple[float, float]:
     """The (entry, exit) pair from the top row of a ``grid_search`` table."""
     top = results.iloc[0]
     return float(top["entry_threshold"]), float(top["exit_threshold"])
+
+
+def objective_surface(results: pd.DataFrame, objective: str = "cagr") -> pd.DataFrame:
+    """``grid_search`` rows pivoted to an entry x exit grid of ``objective``."""
+    return results.pivot(index="entry_threshold", columns="exit_threshold", values=objective)
+
+
+def plateau_thresholds(
+    results: pd.DataFrame,
+    objective: str = "cagr",
+    radius: float = 0.01,
+) -> tuple[float, float]:
+    """The (entry, exit) pair at the centre of the best *neighbourhood*, not the peak.
+
+    The single best cell of a 40,000-cell grid is the noisiest possible
+    estimator: its value is inflated by whatever sampling luck made it beat
+    39,999 rivals (the winner's curse). Averaging each cell with everything
+    within ``radius`` threshold units and taking the argmax of that smoothed
+    surface instead picks the middle of a broad, genuinely good plateau and
+    ignores isolated spikes -- so the answer barely moves when the data does.
+    """
+    surface = objective_surface(results, objective)
+    entries = surface.index.to_numpy(dtype=float)
+    exits = surface.columns.to_numpy(dtype=float)
+    values = surface.to_numpy(dtype=float)
+
+    # neighbourhood mean via a summed-area table (grids run to 200x200)
+    finite = np.nan_to_num(values, nan=0.0)
+    counts = np.isfinite(values).astype(float)
+    value_sums = np.pad(finite, ((1, 0), (1, 0))).cumsum(axis=0).cumsum(axis=1)
+    count_sums = np.pad(counts, ((1, 0), (1, 0))).cumsum(axis=0).cumsum(axis=1)
+
+    row_span = max(1, int(round(radius / _grid_step(entries))))
+    col_span = max(1, int(round(radius / _grid_step(exits))))
+    rows, cols = values.shape
+    smoothed = np.full(values.shape, -np.inf)
+    for i in range(rows):
+        lo_i, hi_i = max(0, i - row_span), min(rows, i + row_span + 1)
+        for j in range(cols):
+            lo_j, hi_j = max(0, j - col_span), min(cols, j + col_span + 1)
+            count = (
+                count_sums[hi_i, hi_j] - count_sums[lo_i, hi_j]
+                - count_sums[hi_i, lo_j] + count_sums[lo_i, lo_j]
+            )
+            if count == 0:
+                continue
+            total = (
+                value_sums[hi_i, hi_j] - value_sums[lo_i, hi_j]
+                - value_sums[hi_i, lo_j] + value_sums[lo_i, lo_j]
+            )
+            smoothed[i, j] = total / count
+
+    i, j = np.unravel_index(np.argmax(smoothed), smoothed.shape)
+    return float(entries[i]), float(exits[j])
+
+
+def _grid_step(values: np.ndarray) -> float:
+    if values.size < 2:
+        return 1.0
+    step = float(np.median(np.diff(values)))
+    return step if step > 0 else 1.0
 
 
 @dataclass
@@ -270,6 +356,8 @@ def walk_forward(
     purge_days: int = 5,
     objective: str = "total_return",
     initial_capital: float = 10_000.0,
+    cash_rate: pd.Series | float | None = None,
+    selector: str = "best",
 ) -> WalkForwardResult:
     """Purged, anchored walk-forward validation of the threshold grid search.
 
@@ -309,12 +397,17 @@ def walk_forward(
         train = data.iloc[: test_lo - purge_days]
         test = data.iloc[test_lo:test_hi]
 
-        ranked = grid_search(train, entry_grid, exit_grid, objective, initial_capital)
-        top = ranked.iloc[0]
-        entry_threshold = float(top["entry_threshold"])
-        exit_threshold = float(top["exit_threshold"])
+        ranked = grid_search(train, entry_grid, exit_grid, objective, initial_capital, cash_rate)
+        if selector == "plateau":
+            entry_threshold, exit_threshold = plateau_thresholds(ranked, objective)
+        else:
+            entry_threshold, exit_threshold = best_thresholds(ranked)
+        top = ranked[
+            (ranked["entry_threshold"] == entry_threshold)
+            & (ranked["exit_threshold"] == exit_threshold)
+        ].iloc[0]
 
-        result = run_backtest(test, entry_threshold, exit_threshold, initial_capital)
+        result = run_backtest(test, entry_threshold, exit_threshold, initial_capital, cash_rate)
         folds.append(
             Fold(
                 number=k + 1,

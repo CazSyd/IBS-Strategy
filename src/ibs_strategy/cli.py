@@ -11,12 +11,14 @@ import pandas as pd
 
 from . import __version__
 from .backtest import DEFAULT_ENTRY_THRESHOLD, DEFAULT_EXIT_THRESHOLD, run_backtest
-from .data import load_data
+from .data import CASH_RATE_TICKER, load_cash_rate, load_data
 from .live import DEFAULT_LOOKBACK_DAYS, latest_signal
 from .metrics import cagr, total_return
 from .optimize import (
     DEFAULT_ENTRY_GRID,
     DEFAULT_EXIT_GRID,
+    best_thresholds,
+    plateau_thresholds,
     OBJECTIVES,
     grid_search,
     walk_forward,
@@ -92,6 +94,22 @@ def _emit(fig, args, filename: str) -> None:
         plt.show()
 
 
+def _cash_rate(args) -> pd.Series | float | None:
+    """Resolve --cash-rate: a ticker symbol, a literal annual rate, or 0."""
+    spec = getattr(args, "cash_rate", None)
+    if spec is None:
+        return None
+    try:
+        rate = float(spec)
+    except ValueError:
+        series = load_cash_rate(spec, end=args.end)
+        print(f"Idle cash earns {spec} ({series.iloc[-1]:.2%} latest)")
+        return series
+    if rate:
+        print(f"Idle cash earns {rate:.2%}/yr")
+    return rate
+
+
 def _load(args) -> pd.DataFrame:
     if getattr(args, "extend", None):
         data = load_extended_data(
@@ -117,7 +135,7 @@ def _load(args) -> pd.DataFrame:
 
 def cmd_backtest(args) -> None:
     data = _load(args)
-    result = run_backtest(data, args.entry, args.exit, args.capital)
+    result = run_backtest(data, args.entry, args.exit, args.capital, _cash_rate(args))
     print(f"Thresholds: entry < {args.entry:g}, exit > {args.exit:g}")
     _print_summary("Backtest metrics", result.summary())
     _buy_hold_line(data["Close"], "Buy & hold over the same period")
@@ -130,15 +148,15 @@ def cmd_optimize(args) -> None:
     entry_grid = args.entry_grid if args.entry_grid is not None else DEFAULT_ENTRY_GRID
     exit_grid = args.exit_grid if args.exit_grid is not None else DEFAULT_EXIT_GRID
     results = grid_search(
-        data, entry_grid, exit_grid, objective=args.objective, initial_capital=args.capital
+        data, entry_grid, exit_grid, objective=args.objective,
+        initial_capital=args.capital, cash_rate=_cash_rate(args),
     )
     print(
         f"\nTop {min(args.top, len(results))} of {len(results)} threshold pairs "
         f"by {args.objective} (in-sample):"
     )
     print(_format_metric_columns(results.head(args.top)).to_string(index=False))
-    best = results.iloc[0]
-    entry, exit_ = best["entry_threshold"], best["exit_threshold"]
+    entry, exit_ = best_thresholds(results)
     follow_up = f"ibs backtest {args.ticker}"
     if args.start:
         follow_up += f" --start {args.start}"
@@ -146,6 +164,12 @@ def cmd_optimize(args) -> None:
         follow_up += f" --end {args.end}"
     follow_up += f" --entry {entry:g} --exit {exit_:g}"
     print(f"\nBest thresholds: entry {entry:g} / exit {exit_:g}")
+    if len(entry_grid) > 2 and len(exit_grid) > 2:
+        p_entry, p_exit = plateau_thresholds(results, args.objective)
+        print(
+            f"Plateau centre:  entry {p_entry:g} / exit {p_exit:g}  "
+            "(middle of the best neighbourhood -- steadier than the peak)"
+        )
     print(f"Backtest them with: {follow_up}")
     if len(entry_grid) > 1 or len(exit_grid) > 1:
         fig_ax = plot_heatmap(
@@ -167,6 +191,8 @@ def cmd_walkforward(args) -> None:
         purge_days=args.purge,
         objective=args.objective,
         initial_capital=args.capital,
+        cash_rate=_cash_rate(args),
+        selector=args.selector,
     )
     print(
         f"\nPer-fold out-of-sample results ({args.folds} folds, {args.purge}-day purge, "
@@ -223,6 +249,10 @@ def build_parser() -> argparse.ArgumentParser:
                             "(e.g. QQQ for TQQQ; costs modeled as 0.95%% ER + T-bill financing)")
         p.add_argument("--leverage", type=float, default=3.0,
                        help="daily leverage of the synthetic pre-listing bars (default 3)")
+        p.add_argument("--cash-rate", default=CASH_RATE_TICKER, metavar="TICKER|RATE",
+                       help="yield on idle cash: a ticker for a live series or a fixed "
+                            f"annual rate; 0 disables (default {CASH_RATE_TICKER}, the "
+                            "13-week T-bill)")
         add_output(p)
 
     def add_output(p: argparse.ArgumentParser) -> None:
@@ -246,6 +276,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--objective", choices=OBJECTIVES, default="total_return",
                        help="ranking metric (default total_return, Sharpe tiebreak)")
 
+    def add_selector(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--selector", choices=("best", "plateau"), default="best",
+                       help="per-fold threshold choice: 'best' takes the top grid cell, "
+                            "'plateau' takes the centre of the best neighbourhood "
+                            "(default best)")
+
     p = sub.add_parser("backtest", help="backtest fixed thresholds; plot trades, equity, drawdown")
     add_common(p)
     add_thresholds(p)
@@ -266,6 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="trading days dropped between train and test windows (default 5)")
     p.add_argument("--min-train-frac", type=float, default=0.5,
                    help="fraction of history reserved for the first training window (default 0.5)")
+    add_selector(p)
     p.set_defaults(func=cmd_walkforward)
 
     p = sub.add_parser(

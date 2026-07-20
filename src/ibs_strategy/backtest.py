@@ -7,6 +7,10 @@ Mechanics (a faithful port of the notebook's ``IBS_strategy``):
 - Fills happen at the *current* bar's open, so there is no look-ahead.
 - Sizing is all-in with whole shares; leftover cash stays uninvested.
 - Equity is marked to market at each bar's close. No commissions or slippage.
+- Idle cash earns ``cash_rate`` (annualized, accrued per trading bar). It
+  defaults to zero -- the notebook's assumption -- but a strategy that sits
+  flat most of the time is materially understated at 0%, so the CLI passes a
+  real T-bill series by default.
 """
 
 from __future__ import annotations
@@ -16,22 +20,35 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .metrics import cagr, max_drawdown, sharpe_ratio, total_return, win_rate
+from .metrics import (
+    TRADING_DAYS_PER_YEAR,
+    cagr,
+    max_drawdown,
+    sharpe_ratio,
+    total_return,
+    win_rate,
+)
 
 __all__ = [
     "DEFAULT_ENTRY_THRESHOLD",
     "DEFAULT_EXIT_THRESHOLD",
     "Trade",
     "BacktestResult",
+    "cash_growth_factors",
     "run_backtest",
 ]
 
 REQUIRED_COLUMNS = ("Open", "Close", "IBS")
 
-# Whole-listing-period CAGR optimum on TQQQ (2010-2026) from the 0.001-step
-# grid; the original notebook's in-sample pick was 0.19/0.95.
-DEFAULT_ENTRY_THRESHOLD = 0.132
-DEFAULT_EXIT_THRESHOLD = 0.965
+# Crash-aware thresholds: the flat region that holds up on BOTH TQQQ (1999+)
+# and SPXL (1993+) once the dot-com and GFC crashes are in the sample, scored
+# by the worse of the two Sharpe ratios rather than by CAGR. Deliberately round
+# -- the surrounding plateau is flat enough that a third digit would be noise.
+# The crash-free 2010+ window instead favours a patient 0.965 exit (see the
+# README): that pick draws down 99% through 2000-2002, which is why it is no
+# longer the default.
+DEFAULT_ENTRY_THRESHOLD = 0.13
+DEFAULT_EXIT_THRESHOLD = 0.80
 
 
 @dataclass(frozen=True)
@@ -96,13 +113,42 @@ class BacktestResult:
         }
 
 
+def cash_growth_factors(
+    data: pd.DataFrame,
+    cash_rate: pd.Series | float | None,
+) -> np.ndarray:
+    """Per-bar growth factors for idle cash from an annualized ``cash_rate``.
+
+    Accepts a scalar rate, a Series (aligned on ``data``'s index and forward
+    filled over market holidays), or None/0 for the no-interest case. Bar 0 is
+    always 1.0: interest accrues *between* bars.
+    """
+    factors = np.ones(len(data), dtype=float)
+    if cash_rate is None:
+        return factors
+    if isinstance(cash_rate, pd.Series):
+        rates = cash_rate.reindex(data.index).ffill().bfill().to_numpy(dtype=float)
+        rates = np.nan_to_num(rates, nan=0.0)
+    else:
+        rates = np.full(len(data), float(cash_rate))
+    factors[1:] = 1.0 + rates[1:] / TRADING_DAYS_PER_YEAR
+    return factors
+
+
 def run_backtest(
     data: pd.DataFrame,
     entry_threshold: float = DEFAULT_ENTRY_THRESHOLD,
     exit_threshold: float = DEFAULT_EXIT_THRESHOLD,
     initial_capital: float = 10_000.0,
+    cash_rate: pd.Series | float | None = None,
 ) -> BacktestResult:
-    """Run the IBS strategy over ``data`` (requires Open, Close and IBS columns)."""
+    """Run the IBS strategy over ``data`` (requires Open, Close and IBS columns).
+
+    ``cash_rate`` is an annualized yield on idle cash -- a scalar, a Series
+    aligned on ``data``'s index, or None for the notebook's 0% assumption.
+    Interest accrues on the cash balance *before* the bar's fill, so a day
+    spent fully invested earns none.
+    """
     missing = [column for column in REQUIRED_COLUMNS if column not in data.columns]
     if missing:
         raise ValueError(f"data is missing required columns: {missing}")
@@ -110,6 +156,7 @@ def run_backtest(
         raise ValueError("need at least two bars to backtest")
 
     df = data.copy()
+    cash_factors = cash_growth_factors(df, cash_rate)
     open_prices = df["Open"].to_numpy(dtype=float)
     close_prices = df["Close"].to_numpy(dtype=float)
     ibs = df["IBS"].to_numpy(dtype=float)
@@ -133,6 +180,7 @@ def run_backtest(
     for i in range(1, n):
         prev_ibs = ibs[i - 1]  # NaN (High == Low bar) compares False both ways -> hold
         open_price = open_prices[i]
+        cash *= cash_factors[i]  # idle cash earns overnight, before today's fill
 
         if not in_position and prev_ibs < entry_threshold:
             shares = int(cash // open_price)

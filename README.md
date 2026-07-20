@@ -18,11 +18,11 @@ IBS = (Close - Low) / (High - Low)
 
 Values near 0 mean the close sat at the low of the day (oversold), values near 1 at the high (overbought). The strategy is long-only on daily bars:
 
-- **Entry** - if flat and _yesterday's_ IBS < entry threshold (default **0.132**), buy at _today's open_, all-in with whole shares.
-- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.965**), sell at _today's open_.
-- Equity is marked to market at each close. No commissions or slippage are modeled.
+- **Entry** - if flat and _yesterday's_ IBS < entry threshold (default **0.13**), buy at _today's open_, all-in with whole shares.
+- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.80**), sell at _today's open_.
+- Equity is marked to market at each close. Idle cash earns the 13-week T-bill; no commissions or slippage are modeled.
 
-The default thresholds are the CAGR-optimal pair over TQQQ's full listing history (2010-2026, see the results snapshot below); pass `--entry`/`--exit` (or the function arguments) to try others, e.g. the notebook's original 0.19/0.95.
+The defaults are **crash-aware**: chosen on history that includes the dot-com crash and the GFC, scored by the worse of the Sharpe ratios on TQQQ and SPXL so no single ticker can carry the choice. They are deliberately round, because the surrounding plateau is flat enough that a third digit would encode noise. Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002 - see [Choosing thresholds](#choosing-thresholds-the-plateau-not-the-peak) and the results snapshot. Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
 
 Signals always come from the previous completed bar, so there is no look-ahead. Mean reversion of this kind works best on high-volatility leveraged ETFs such as **TQQQ** and **SPXL**.
 
@@ -82,11 +82,17 @@ print(wf.summary())              # stitched out-of-sample metrics
 
 `run_backtest` is a faithful port of the notebook's event-driven loop: previous-bar IBS signal, next-open fill, all-in whole-share sizing (leftover cash stays uninvested), one position at a time, strict threshold comparisons. Bars where `High == Low` have undefined IBS and never signal.
 
+**Idle cash earns interest.** The notebook implicitly paid 0% on cash, which quietly penalizes any setting that spends time flat - and the crash-aware thresholds sit in cash roughly 70% of the time. `--cash-rate` (default `^IRX`, the 13-week T-bill) accrues a real yield on the cash balance each bar, before that bar's fill, so a fully invested day earns none. Pass `--cash-rate 0` for the notebook's assumption. This matters most in the high-rate 1999-2007 stretch, where cash yielded 3-6.5%.
+
+### Choosing thresholds: the plateau, not the peak
+
+The single best cell of a 40,000-cell grid is the noisiest estimator available - its value is inflated by whatever sampling luck let it beat 39,999 rivals, which is why an in-sample "optimum" routinely delivers about half its advertised CAGR out-of-sample. `plateau_thresholds` (CLI: `--selector plateau`) instead averages each cell with everything within `radius` threshold units and takes the argmax of that smoothed surface, so it lands in the middle of a broad, genuinely good region and ignores isolated spikes. `ibs optimize` prints both the argmax and the plateau centre.
+
 ### Metrics (as defined in the notebook)
 
 | Metric       | Definition                                                                               |
 | ------------ | ---------------------------------------------------------------------------------------- |
-| Sharpe ratio | `mean(daily returns) / std(ddof=1) * sqrt(252)`, zero risk-free rate, flat days included |
+| Sharpe ratio | `mean(daily returns) / std(ddof=1) * sqrt(252)`, zero risk-free rate in the ratio, flat days included |
 | Total return | `final capital / initial capital - 1`                                                    |
 | Max drawdown | deepest peak-to-trough decline of the equity curve                                       |
 | Win rate     | share of _closed_ trades whose exit fill beat the entry fill                             |
@@ -109,48 +115,63 @@ TQQQ only lists from 2010-02, so its real history misses the dot-com crash. `--e
 - Daily costs: 0.95%/yr expense ratio plus **financing of the borrowed 2x exposure** at the 13-week T-bill yield (`^IRX`) + a 0.5%/yr swap spread, deducted uniformly across each bar. The spread is calibrated on the 2010-2026 overlap, where the model tracks real TQQQ to **+0.07%/yr CAGR drift at 0.9989 daily-return correlation**; skipping the financing leg (as naive 3x reconstructions do) would overshoot by ~5.7%/yr.
 - The path is scaled so the seam overnight move into the first real bar equals the modeled 3x proxy move, and a boolean `Synthetic` column marks reconstructed bars.
 
-Caveats: the synthetic era has no tracking error, spreads, or intraday-rebalancing effects, and its volume is the proxy's. It informs regime analysis; the package defaults stay tuned on real listing history.
+Caveats: the synthetic era has no tracking error, spreads, or intraday-rebalancing effects, and its volume is the proxy's. The package defaults are chosen on this extended history, because a 3x fund's defining risk is a crash that its own listing history happens not to contain.
 
-### Results snapshot (TQQQ, full listing history 2010-02 to 2026-07, checked July 2026)
+### Results snapshot (TQQQ, real listing history 2010-02 to 2026-07, checked July 2026)
 
-Default thresholds **entry 0.132 / exit 0.965** - the whole-period CAGR optimum from the 0.001-step grid search (the top cells form a coherent plateau around entry 0.130-0.132 / exit 0.964-0.969, not a lone spike):
+This is the window that flatters the patient exit: no crash in it, so holding longer simply captures more drift. All figures pay the 13-week T-bill on idle cash.
 
-| Metric                     | IBS 0.132 / 0.965 (default) | IBS 0.133 / 0.802 (crash-aware) | Buy & hold |
-| -------------------------- | --------------------------- | ------------------------------- | ---------- |
-| CAGR                       | **60.3%**                   | 32.1%                           | 42.3%      |
-| Total return               | +231,912%                   | +9,563%                         | +32,748%   |
-| Sharpe ratio               | 1.19                        | 0.93                            | 0.89       |
-| Max drawdown               | -56.8%                      | -44.5%                          | -81.7%     |
-| Win rate                   | 74.6% (177 closed trades)   | 67.8% (354)                     | -          |
-| Time in market             | 62.2%                       | 26.3%                           | 100%       |
-| Final capital ($10k start) | $23.20M                     | $0.97M                          | $3.28M     |
+| Metric                     | IBS 0.13 / 0.80 (default) | IBS 0.132 / 0.965 (patient exit) | Buy & hold |
+| -------------------------- | ------------------------- | -------------------------------- | ---------- |
+| CAGR                       | 30.8%                     | **61.0%**                        | 42.3%      |
+| Total return               | +8,136%                   | +249,812%                        | +32,748%   |
+| Sharpe ratio               | 0.91                      | 1.19                             | 0.89       |
+| Max drawdown               | **-44.5%**                | -56.8%                           | -81.7%     |
+| Win rate                   | 67.0% (348 closed trades) | 74.6% (177)                      | -          |
+| Time in market             | **25.8%**                 | 62.2%                            | 100%       |
+| Final capital ($10k start) | $0.82M                    | $25.0M                           | $3.28M     |
+
+The patient exit wins this window by a factor of 30 in final capital - and that is precisely the trap. Extend the sample to include a crash and it inverts.
 
 ![TQQQ backtest at the default thresholds: equity vs buy & hold, drawdown](docs/backtest.png)
 
-- **Purged walk-forward, out-of-sample 2018-04 to 2026-07** (0.001 grid re-optimized per fold): 46.6% CAGR vs 34.8% for buy & hold (Sharpe 0.93, max drawdown -61.8%). The two most recent folds independently choose exactly entry 0.132 / exit 0.965, agreeing with the default, and the strategy sat roughly flat through the 2022 bear while buy & hold collapsed.
+- **Purged walk-forward, out-of-sample 2018-04 to 2026-07** (0.001 grid re-optimized per fold on this window): 46.6% CAGR vs 34.8% for buy & hold (Sharpe 0.93, max drawdown -61.8%). Trained on crash-free data, the folds converge on the patient exit - which is exactly how a strategy talks itself into the configuration that dies in 2000.
 - Engine parity: over the original notebook's window (2020-01 to 2025-07) with its 0.19/0.95 thresholds, the engine reproduces the notebook's reported numbers (Sharpe 1.286 vs 1.283, max drawdown -46.48% vs -46.47%) up to Yahoo's adjusted-price revisions.
 
 ![TQQQ walk-forward out-of-sample equity with per-fold thresholds](docs/walkforward.png)
 
-Caveat: the headline row is still fitted in-sample and no commissions or slippage are modeled - the walk-forward row is the fairer performance estimate.
+Caveat: these rows are fitted in-sample and model no commissions, slippage, or taxes - and the default trades about twice as often as the patient exit, so it carries roughly double the slippage and realizes short-term gains twice as often.
 
-**Extended to 1999 with synthetic data** (`ibs ... --extend QQQ`; context, not the defaults):
+### Extended history, where the defaults were actually chosen
 
-- At the default 0.132/0.965 thresholds, 1999-03 to 2026-07 gives 23.0% CAGR vs 2.8% for buy & hold (a 3x hold is nearly wiped out in 2000-2002) - but with a **-99.2% max drawdown**: the 2010-era patient exit is unlivable through a 3x crash regime.
-- The 1999+ whole-period CAGR optimum flips the exit to "sell the first bounce": **entry 0.133 / exit 0.802** (full metrics in the table below). The ~0.13 entry reappears in every regime tested; the exit threshold is the regime-sensitive knob.
-- Walk-forward with training anchored at 1999 (out-of-sample 2012-11 to 2026-07, all real bars): **32.4% CAGR, Sharpe 0.93, -39.9% max drawdown at just 27% time in market**. Far safer than buy & hold, though trailing its 43.8% CAGR through a crash-free bull era - the crash-taught exits keep paying for insurance the period never needed.
+Add the dot-com crash and the GFC (`--extend`) and the ranking reverses on **every** axis - the crash-aware default earns more *and* risks less, on both tickers:
 
-Full metrics over the extended history (1999-03 to 2026-07, synthetic + real bars):
+**TQQQ, 1999-03 to 2026-07** (synthetic + real bars):
 
-| Metric                     | IBS 0.133 / 0.802 (1999+ optimum) | IBS 0.132 / 0.965 (default) | Buy & hold |
-| -------------------------- | --------------------------------- | --------------------------- | ---------- |
-| CAGR                       | **31.7%**                         | 23.0%                       | 2.8%       |
-| Total return               | +186,310%                         | +28,762%                    | +111%      |
-| Sharpe ratio               | 0.77                              | 0.65                        | 0.44       |
-| Max drawdown               | -78.5%                            | -99.2%                      | -99.98%    |
-| Win rate                   | 65.4% (635 closed trades)         | 68.7% (294)                 | -          |
-| Time in market             | 30.8%                             | 66.7%                       | 100%       |
-| Final capital ($10k start) | $18.64M                           | $2.89M                      | $21.1k     |
+| Metric                     | IBS 0.13 / 0.80 (default) | IBS 0.132 / 0.965 (patient exit) | Buy & hold |
+| -------------------------- | ------------------------- | -------------------------------- | ---------- |
+| CAGR                       | **31.3%**                 | 23.7%                            | 2.8%       |
+| Total return               | +172,682%                 | +33,607%                         | +111%      |
+| Sharpe ratio               | **0.77**                  | 0.65                             | 0.44       |
+| Max drawdown               | **-78.4%**                | -99.2%                           | -99.98%    |
+| Win rate                   | 64.8% (627 closed trades) | 68.7% (294)                      | -          |
+| Time in market             | **30.4%**                 | 66.7%                            | 100%       |
+| Final capital ($10k start) | $17.28M                   | $3.37M                           | $21.1k     |
+
+**SPXL, 1993-02 to 2026-07** (extended via SPY, so it spans two crashes):
+
+| Metric                     | IBS 0.13 / 0.80 (default) | IBS 0.132 / 0.965 (patient exit) | Buy & hold |
+| -------------------------- | ------------------------- | -------------------------------- | ---------- |
+| CAGR                       | **25.4%**                 | 18.9%                            | 14.1%      |
+| Sharpe ratio               | **0.81**                  | 0.60                             | 0.52       |
+| Max drawdown               | **-67.7%**                | -91.4%                           | -98.2%     |
+| Time in market             | **29.9%**                 | 63.4%                            | 100%       |
+| Final capital ($10k start) | $19.41M                   | $3.27M                           | $0.82M     |
+
+Note the win rate moves the *wrong* way for the better configuration (64.8% vs 68.7% on TQQQ). That is not a defect: an exit that almost never fires leaves losing positions open rather than realizing them, so the losses reappear as the -99.2% drawdown instead of as red trades. A high win rate beside a catastrophic tail is the signature of a strategy that hides losses rather than avoiding them.
+
+- Walk-forward with training anchored at 1999 (out-of-sample 2012-11 to 2026-07, all real bars): **32.4% CAGR, Sharpe 0.93, -39.9% max drawdown at just 27% time in market** - far safer than buy & hold, though trailing its 43.8% CAGR through a crash-free bull era. The crash-taught exit keeps paying for insurance that period never needed.
+- Per-ticker tuning does **not** help: over identical walk-forward folds, thresholds re-fitted on SPXL's own history lost 5.4 CAGR points out-of-sample against the shared default, and its per-fold picks oscillated between entry 0.027 and 0.197. IBS is already normalized by each day's range, so a fixed threshold fires on 11.7-13.5% of days across instruments whose volatility differs 3.4x - there is no per-instrument quantity for tuning to adapt to.
 
 ![1999-2026 equity on log scale: crash-aware thresholds vs buy & hold](docs/extended.png)
 
