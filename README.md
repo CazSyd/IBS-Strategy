@@ -19,10 +19,10 @@ IBS = (Close - Low) / (High - Low)
 Values near 0 mean the close sat at the low of the day (oversold), values near 1 at the high (overbought). The strategy is long-only on daily bars:
 
 - **Entry** - if flat and _yesterday's_ IBS < entry threshold (default **0.13**), buy at _today's open_, all-in with whole shares.
-- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.80**), sell at _today's open_.
+- **Exit** - if long and _yesterday's_ IBS > exit threshold (default **0.5**), sell at _today's open_.
 - Equity is marked to market at each close. Idle cash earns the 13-week T-bill; no commissions or slippage are modeled.
 
-The defaults are round on purpose, and they are **not** the output of an optimizer. Entry 0.13 fires on the bottom ~12% of days, which is where [essentially all of the measured edge lives](#does-the-signal-actually-predict-anything); exit 0.80 is a deliberate risk choice, favouring crash truncation over bull-market participation. Threshold surfaces cannot justify anything finer - [they do not replicate](#why-the-thresholds-are-not-optimized). Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002. The popular 200-day-SMA overlay does not help either - [it removes the edge, not the risk](#where-the-edge-lives-below-the-200-day-sma). Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
+The defaults are round on purpose, and they are **not** the output of an optimizer. Entry 0.13 fires on the bottom ~12% of days, which is where [essentially all of the measured edge lives](#does-the-signal-actually-predict-anything). Exit 0.5 is a prompt, zero-degrees-of-freedom exit at the neutral midpoint - sell once a bar closes in the upper half of its range: the IBS edge is _front-loaded_ (largely spent within a day, gone within three), so a prompt exit harvests it and steps aside, which keeps the strategy in cash ~80% of the time and truncates crashes. An _optimized_ exit cannot be justified - the threshold surface [does not replicate out-of-sample](#why-the-thresholds-are-not-optimized), and a stop loss makes a mean-reversion system worse rather than better (it sells exactly when the expected bounce is largest). Optimizing purely on the crash-free 2010+ window instead picks a patient 0.965 exit, which earns far more in a bull run and draws down 99% through 2000-2002. The 200-day-SMA overlay does not help either - [it removes the edge, not the risk](#where-the-edge-lives-below-the-200-day-sma). Pass `--entry`/`--exit` to use any other pair, e.g. the notebook's original 0.19/0.95.
 
 Signals always come from the previous completed bar, so there is no look-ahead. Mean reversion of this kind works best on high-volatility leveraged ETFs such as **TQQQ** and **SPXL**.
 
@@ -67,7 +67,7 @@ from ibs_strategy import load_data, run_backtest, grid_search, walk_forward, plo
 
 data = load_data("TQQQ")  # full listing history; pass start/end to narrow
 
-result = run_backtest(data)      # defaults: entry 0.13 / exit 0.80
+result = run_backtest(data)      # defaults: entry 0.13 / exit 0.5
 print(result.summary())          # sharpe, total_return, cagr, max_drawdown, win_rate, ...
 plot_backtest(result, ticker="TQQQ")
 
@@ -82,7 +82,7 @@ print(wf.summary())              # stitched out-of-sample metrics
 
 `run_backtest` is a faithful port of the notebook's event-driven loop: previous-bar IBS signal, next-open fill, all-in whole-share sizing (leftover cash stays uninvested), one position at a time, strict threshold comparisons. Bars where `High == Low` have undefined IBS and never signal.
 
-**Idle cash earns interest.** The notebook implicitly paid 0% on cash, which quietly penalizes any setting that spends time flat - and the crash-aware thresholds sit in cash roughly 70% of the time. `--cash-rate` (default `^IRX`, the 13-week T-bill) accrues a real yield on the cash balance each bar, before that bar's fill, so a fully invested day earns none. Pass `--cash-rate 0` for the notebook's assumption. This matters most in the high-rate 1999-2007 stretch, where cash yielded 3-6.5%.
+**Idle cash earns interest.** The notebook implicitly paid 0% on cash, which quietly penalizes any setting that spends time flat - and the default exit sits in cash over 80% of the time. `--cash-rate` (default `^IRX`, the 13-week T-bill) accrues a real yield on the cash balance each bar, before that bar's fill, so a fully invested day earns none. Pass `--cash-rate 0` for the notebook's assumption. This matters most in the high-rate 1999-2007 stretch, where cash yielded 3-6.5%.
 
 **Optional regime gate.** `run_backtest(..., regime=flags)` blocks entries while a boolean Series is off, and `regime_exit=True` additionally liquidates at the next open once it turns off - with the same previous-bar, no-look-ahead timing as the IBS signal. It exists to *test* overlays such as the 200-day SMA, which is how we learned that [the filter removes the edge rather than the risk](#where-the-edge-lives-below-the-200-day-sma). There is deliberately no CLI flag for it.
 
@@ -110,7 +110,7 @@ response = decile_response(load_data("TQQQ"))
 print(response, response_gradient(response), sep="\n")
 ```
 
-Caveats worth keeping attached. The effect lives almost entirely in the bottom quintile - the middle buckets are noise, so this is closer to an extreme-value effect than a smooth dose-response, and the rank correlations partly reflect that. Daily equity returns are fat-tailed enough to flatter t-statistics. The bottom decile on TQQQ is not individually significant (t=1.00); only pooling it with the next decile is. And the **exit** threshold gets no support from this test at all - forward returns in bucket 8 are positive on both S&P instruments, so 0.80 likely exits early. It is justified by drawdown control, not by predictive power.
+Caveats worth keeping attached. The effect lives almost entirely in the bottom quintile - the middle buckets are noise, so this is closer to an extreme-value effect than a smooth dose-response, and the rank correlations partly reflect that. Daily equity returns are fat-tailed enough to flatter t-statistics. The bottom decile on TQQQ is not individually significant (t=1.00); only pooling it with the next decile is. And the **exit** threshold gets no support from this test at all - forward returns stay positive well above the entry band, so any IBS exit is a risk/exposure choice, not an edge. The default 0.5 exits promptly by design (the entry edge is front-loaded); it is justified by drawdown control, not by predictive power.
 
 #### Reaching further back (and the data-quality guard)
 
@@ -133,7 +133,7 @@ Splitting the same test by regime - is the underlying index above or below its 2
 
 Above the SMA the edge is statistically zero on every instrument; below it, it is large and significant on every instrument. Buying panic closes is a *downtrend* phenomenon: only about a third of signal days occur below the SMA, and they carry essentially all of the measured edge. The above-SMA trades still made money historically - but that is drift capture a plain holding would have earned anyway, not mean reversion.
 
-This kills the most popular "fix" for the strategy's crash exposure before it starts. Gating entries with the 200-day SMA keeps exactly the trades with no edge and discards exactly the ones with all of it: on extended TQQQ history the gate cuts CAGR from 31.3% to 14.7% and *lowers* Sharpe from 0.77 to 0.58, paying for its smaller drawdown (-52.5% vs -78.4%) with most of the return. The direction replicates in all four half-samples on both tickers, and a length sweep is near-monotone - the longer (weaker) the SMA, the better the result, i.e. the data asks for less filter all the way to none. Forcing an exit on the SMA cross is worse still (it sells into holes the IBS exit rides out for a day), and pure 200-SMA timing of the 3x fund - the overlay's home turf - went through the dot-com crash at **-94.5%**: the index falls 25-30% before the cross triggers, which is -60%+ at 3x, and the summer-2000 bear rally re-crossed the SMA just in time for the next leg down. The one configuration the SMA genuinely rescues is the patient 0.965 exit (forced regime exit turns its -99.2% into -75.8% at no CAGR cost), which only proves the point: the SMA is a months-slow implementation of what the 0.80 exit already does in days.
+This kills the most popular "fix" for the strategy's crash exposure before it starts. Gating entries with the 200-day SMA keeps exactly the trades with no edge and discards exactly the ones with all of it: on extended TQQQ history (measured at the former 0.80 exit) the gate cuts CAGR from 31.3% to 14.7% and *lowers* Sharpe from 0.77 to 0.58, paying for its smaller drawdown (-52.5% vs -78.4%) with most of the return. The direction replicates in all four half-samples on both tickers, and a length sweep is near-monotone - the longer (weaker) the SMA, the better the result, i.e. the data asks for less filter all the way to none. Forcing an exit on the SMA cross is worse still (it sells into holes the IBS exit rides out for a day), and pure 200-SMA timing of the 3x fund - the overlay's home turf - went through the dot-com crash at **-94.5%**: the index falls 25-30% before the cross triggers, which is -60%+ at 3x, and the summer-2000 bear rally re-crossed the SMA just in time for the next leg down. The one configuration the SMA genuinely rescues is the patient 0.965 exit (forced regime exit turns its -99.2% into -75.8% at no CAGR cost), which only proves the point: the SMA is a months-slow implementation of what the prompt IBS exit already does in days.
 
 The uncomfortable conclusion: **the edge and the crash risk are the same trades.** The premium comes from buying panic in downtrends, which is also the only place a crash can catch the strategy. No trend filter can remove the tail without removing the return - position size and leverage choice are the only levers that actually control it.
 
@@ -186,19 +186,19 @@ Caveats: the synthetic era has no tracking error, spreads, or intraday-rebalanci
 
 ### Results snapshot (TQQQ, real listing history 2010-02 to 2026-07, checked July 2026)
 
-This is the window that flatters the patient exit: no crash in it, so holding longer simply captures more drift. All figures pay the 13-week T-bill on idle cash.
+This is the window that flatters the patient exit: no crash in it, so holding longer simply captures more drift. All figures pay the 13-week T-bill on idle cash. Each value carries **± one standard error** from a 1,000-run moving-block bootstrap (21-day blocks, preserving volatility clustering); total return and final capital get none because they are log-normal over a fixed window - read their uncertainty off CAGR. The bars are wide: at 3x leverage even a decade or two of daily data pins these numbers only loosely.
 
-| Metric                     | IBS 0.13 / 0.80 (default) | IBS 0.132 / 0.965 (patient exit) | Buy & hold |
-| -------------------------- | ------------------------- | -------------------------------- | ---------- |
-| CAGR                       | 30.8%                     | **61.0%**                        | 42.3%      |
-| Total return               | +8,136%                   | +249,812%                        | +32,748%   |
-| Sharpe ratio               | 0.91                      | 1.19                             | 0.89       |
-| Max drawdown               | **-44.5%**                | -56.8%                           | -81.7%     |
-| Win rate                   | 67.0% (348 closed trades) | 74.6% (177)                      | -          |
-| Time in market             | **25.8%**                 | 62.2%                            | 100%       |
-| Final capital ($10k start) | $0.82M                    | $25.0M                           | $3.28M     |
+| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        |
+| -------------------------- | ----------------------------- | -------------------------------- | ----------------- |
+| CAGR                       | 20.3% ± 7.5%                  | **59.3% ± 16.3%**                | 40.9% ± 20.1%     |
+| Total return               | +1,989%                       | +213,619%                        | +27,991%          |
+| Sharpe ratio               | 0.78 ± 0.22                   | 1.17 ± 0.21                      | 0.87 ± 0.24       |
+| Max drawdown               | **-39.2% ± 10.0%**            | -56.8% ± 9.3%                    | -81.7% ± 9.9%     |
+| Win rate                   | 65.3% ± 2.4% (392 trades)     | 74.6% ± 3.3% (177)               | -                 |
+| Time in market             | **16.2% ± 0.9%**              | 62.3% ± 2.1%                     | 100%              |
+| Final capital ($10k start) | $0.21M                        | $21.4M                           | $2.81M            |
 
-The patient exit wins this window by a factor of 30 in final capital - and that is precisely the trap. Extend the sample to include a crash and it inverts.
+On this crash-free decade the prompt default is deliberately timid - in cash ~84% of the time, it trails **both** buy & hold and the patient exit on return, and even on Sharpe (0.78 vs 0.87); its only win here is the shallow -39% drawdown. The patient exit, by contrast, beats buy & hold ~8x in final capital - and that is precisely the trap. Extend the sample to include a crash and it inverts.
 
 ![TQQQ backtest at the default thresholds: equity vs buy & hold, drawdown](docs/backtest.png)
 
@@ -207,40 +207,42 @@ The patient exit wins this window by a factor of 30 in final capital - and that 
 
 ![TQQQ walk-forward out-of-sample equity with per-fold thresholds](docs/walkforward.png)
 
-Caveat: these rows are fitted in-sample and model no commissions, slippage, or taxes - and the default trades about twice as often as the patient exit, so it carries roughly double the slippage and realizes short-term gains twice as often.
+Caveat: these rows are fitted in-sample and model no commissions, slippage, or taxes - and the default trades more than twice as often as the patient exit, so it carries roughly double the slippage and realizes short-term gains twice as often.
 
 ### Extended history, where the defaults were actually chosen
 
-Add the dot-com crash and the GFC (`--extend`) and the ranking reverses on **every** axis - the crash-aware default earns more *and* risks less, on both tickers:
+Add the dot-com crash and the GFC (`--extend`) and the ranking reverses on **every** axis - the default earns more *and* risks less than the patient exit, on both tickers:
 
 **TQQQ, 1999-03 to 2026-07** (synthetic + real bars):
 
-| Metric                     | IBS 0.13 / 0.80 (default) | IBS 0.132 / 0.965 (patient exit) | Buy & hold |
-| -------------------------- | ------------------------- | -------------------------------- | ---------- |
-| CAGR                       | **31.3%**                 | 23.7%                            | 2.8%       |
-| Total return               | +172,682%                 | +33,607%                         | +111%      |
-| Sharpe ratio               | **0.77**                  | 0.65                             | 0.44       |
-| Max drawdown               | **-78.4%**                | -99.2%                           | -99.98%    |
-| Win rate                   | 64.8% (627 closed trades) | 68.7% (294)                      | -          |
-| Time in market             | **30.4%**                 | 66.7%                            | 100%       |
-| Final capital ($10k start) | $17.28M                   | $3.37M                           | $21.1k     |
+| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        |
+| -------------------------- | ----------------------------- | -------------------------------- | ----------------- |
+| CAGR                       | **29.6% ± 8.5%**              | 23.0% ± 15.0%                    | 2.2% ± 15.6%      |
+| Total return               | +120,552%                     | +28,753%                         | +81%              |
+| Sharpe ratio               | **0.79 ± 0.14**               | 0.64 ± 0.17                      | 0.43 ± 0.18       |
+| Max drawdown               | **-70.7% ± 9.3%**             | -99.2% ± 6.4%                    | -99.98% ± 3.6%    |
+| Win rate                   | 62.9% ± 1.8% (753 trades)     | 68.7% ± 2.7% (294)               | -                 |
+| Time in market             | **19.1% ± 0.7%**              | 66.7% ± 1.6%                     | 100%              |
+| Final capital ($10k start) | $12.07M                       | $2.89M                           | $18.1k            |
 
 **SPXL, 1993-02 to 2026-07** (extended via SPY, so it spans two crashes):
 
-| Metric                     | IBS 0.13 / 0.80 (default) | IBS 0.132 / 0.965 (patient exit) | Buy & hold |
-| -------------------------- | ------------------------- | -------------------------------- | ---------- |
-| CAGR                       | **25.4%**                 | 18.9%                            | 14.1%      |
-| Sharpe ratio               | **0.81**                  | 0.60                             | 0.52       |
-| Max drawdown               | **-67.7%**                | -91.4%                           | -98.2%     |
-| Time in market             | **29.9%**                 | 63.4%                            | 100%       |
-| Final capital ($10k start) | $19.41M                   | $3.27M                           | $0.82M     |
+| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        |
+| -------------------------- | ----------------------------- | -------------------------------- | ----------------- |
+| CAGR                       | **22.6% ± 5.7%**              | 18.7% ± 8.2%                     | 13.9% ± 10.3%     |
+| Sharpe ratio               | **0.83 ± 0.16**               | 0.60 ± 0.15                      | 0.51 ± 0.16       |
+| Max drawdown               | **-51.5% ± 9.5%**             | -91.4% ± 9.0%                    | -98.2% ± 7.9%     |
+| Time in market             | **18.7% ± 0.6%**              | 63.4% ± 1.5%                     | 100%              |
+| Final capital ($10k start) | $9.23M                        | $3.08M                           | $0.77M            |
 
-Note the win rate moves the *wrong* way for the better configuration (64.8% vs 68.7% on TQQQ). That is not a defect: an exit that almost never fires leaves losing positions open rather than realizing them, so the losses reappear as the -99.2% drawdown instead of as red trades. A high win rate beside a catastrophic tail is the signature of a strategy that hides losses rather than avoiding them.
+Read with the error bars, the tables say something sharper than the point estimates alone. The default's CAGR *advantage* over the patient exit (29.6 vs 23.0 on TQQQ, 22.6 vs 18.7 on SPXL) sits inside a single standard error - not statistically distinguishable - while its drawdown advantage (-70.7% vs -99.2%, -51.5% vs -91.4%) is two to three SE clear. The strategy's real, measurable edge over holding longer is **lower risk, not higher return** - the risk-transformer thesis, now with the noise quantified. (The Sharpe error bars, ±0.14 to ±0.24, also match the `1/sqrt(years)` rule of thumb from the resolution analysis.)
+
+Note too that the win rate moves the *wrong* way for the better configuration (62.9% vs 68.7% on TQQQ). That is not a defect: an exit that almost never fires leaves losing positions open rather than realizing them, so the losses reappear as the -99.2% drawdown instead of as red trades. A high win rate beside a catastrophic tail is the signature of a strategy that hides losses rather than avoiding them.
 
 - Walk-forward with training anchored at 1999 (out-of-sample 2012-11 to 2026-07, all real bars): **32.4% CAGR, Sharpe 0.93, -39.9% max drawdown at just 27% time in market** - far safer than buy & hold, though trailing its 43.8% CAGR through a crash-free bull era. The crash-taught exit keeps paying for insurance that period never needed.
 - Per-ticker tuning does **not** help: over identical walk-forward folds, thresholds re-fitted on SPXL's own history lost 5.4 CAGR points out-of-sample against the shared default, and its per-fold picks oscillated between entry 0.027 and 0.197. IBS is already normalized by each day's range, so a fixed threshold fires on 11.7-13.5% of days across instruments whose volatility differs 3.4x - there is no per-instrument quantity for tuning to adapt to.
 
-![1999-2026 equity on log scale: crash-aware thresholds vs buy & hold](docs/extended.png)
+![1999-2026 equity on log scale: the default 0.13/0.5 vs buy & hold](docs/extended.png)
 
 Charts regenerate with `uv run python scripts/build_readme_charts.py`.
 
