@@ -192,17 +192,19 @@ Caveats: the synthetic era has no tracking error, spreads, or intraday-rebalanci
 
 This is the window that flatters the patient exit: no crash in it, so holding longer simply captures more drift. All figures pay the 13-week T-bill on idle cash. Each value carries **± one standard error** from a 1,000-run moving-block bootstrap (21-day blocks, preserving volatility clustering); total return and final capital get none because they are log-normal over a fixed window - read their uncertainty off CAGR. The bars are wide: at 3x leverage even a decade or two of daily data pins these numbers only loosely.
 
-| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        |
-| -------------------------- | ----------------------------- | -------------------------------- | ----------------- |
-| CAGR                       | 20.3% ± 7.5%                  | **59.3% ± 16.3%**                | 40.9% ± 20.1%     |
-| Total return               | +1,989%                       | +213,619%                        | +27,991%          |
-| Sharpe ratio               | 0.78 ± 0.22                   | 1.17 ± 0.21                      | 0.87 ± 0.24       |
-| Max drawdown               | **-39.2% ± 10.0%**            | -56.8% ± 9.3%                    | -81.7% ± 9.9%     |
-| Win rate                   | 65.3% ± 2.4% (392 trades)     | 74.6% ± 3.3% (177)               | -                 |
-| Time in market             | **16.2% ± 0.9%**              | 62.3% ± 2.1%                     | 100%              |
-| Final capital ($10k start) | $0.21M                        | $21.4M                           | $2.81M            |
+| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        | QQQ 1.13x (risk-matched) |
+| -------------------------- | ----------------------------- | -------------------------------- | ----------------- | ------------------------ |
+| CAGR                       | 20.3% ± 7.5%                  | **59.3% ± 16.3%**                | 40.9% ± 20.1%     | 21.0% ± 6.0%             |
+| Total return               | +1,989%                       | +213,619%                        | +27,991%          | +2,191%                  |
+| Sharpe ratio               | 0.78 ± 0.22                   | 1.17 ± 0.21                      | 0.87 ± 0.24       | 0.94 ± 0.23              |
+| Max drawdown               | **-39.2% ± 10.0%**            | -56.8% ± 9.3%                    | -81.7% ± 9.9%     | -39.2% ± 8.1%            |
+| Win rate                   | 65.3% ± 2.4% (392 trades)     | 74.6% ± 3.3% (177)               | -                 | -                        |
+| Time in market             | **16.2% ± 0.9%**              | 62.3% ± 2.1%                     | 100%              | 100%                     |
+| Final capital ($10k start) | $0.21M                        | $21.4M                           | $2.81M            | $0.23M                   |
 
 On this crash-free decade the prompt default is deliberately timid - in cash ~84% of the time, it trails **both** buy & hold and the patient exit on return, and even on Sharpe (0.78 vs 0.87); its only win here is the shallow -39% drawdown. The patient exit, by contrast, beats buy & hold ~8x in final capital - and that is precisely the trap. Extend the sample to include a crash and it inverts.
+
+The last column reframes the benchmark itself. Because the default sits ~16% invested, scoring it against a 100%-exposed hold measures exposure as much as skill; the fairer yardstick is the plain 1x index **levered to the strategy's own risk** - QQQ at a constant, daily-rebalanced 1.13x (financed at T-bills), sized so its worst drawdown equals the default's -39.2%. Matched that way, passive still wins this crash-free decade outright: 21.0% vs 20.3% CAGR at a higher 0.94 Sharpe. With no crash to truncate, the cash-heavy default is paying for insurance the window never files a claim on.
 
 ![TQQQ backtest at the default thresholds: equity vs buy & hold, drawdown](docs/backtest.png)
 
@@ -219,27 +221,29 @@ Add the dot-com crash and the GFC (`--extend`) and the ranking reverses on **eve
 
 **TQQQ, 1999-03 to 2026-07** (synthetic + real bars):
 
-| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        |
-| -------------------------- | ----------------------------- | -------------------------------- | ----------------- |
-| CAGR                       | **29.6% ± 8.5%**              | 23.0% ± 15.0%                    | 2.2% ± 15.6%      |
-| Total return               | +120,552%                     | +28,753%                         | +81%              |
-| Sharpe ratio               | **0.79 ± 0.14**               | 0.64 ± 0.17                      | 0.43 ± 0.18       |
-| Max drawdown               | **-70.7% ± 9.3%**             | -99.2% ± 6.4%                    | -99.98% ± 3.6%    |
-| Win rate                   | 62.9% ± 1.8% (753 trades)     | 68.7% ± 2.7% (294)               | -                 |
-| Time in market             | **19.1% ± 0.7%**              | 66.7% ± 1.6%                     | 100%              |
-| Final capital ($10k start) | $12.07M                       | $2.89M                           | $18.1k            |
+| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        | QQQ 0.74x (risk-matched) |
+| -------------------------- | ----------------------------- | -------------------------------- | ----------------- | ------------------------ |
+| CAGR                       | **29.6% ± 8.5%**              | 23.0% ± 15.0%                    | 2.2% ± 15.6%      | 9.0% ± 3.7%              |
+| Total return               | +120,552%                     | +28,753%                         | +81%              | +957%                    |
+| Sharpe ratio               | **0.79 ± 0.14**               | 0.64 ± 0.17                      | 0.43 ± 0.18       | 0.53 ± 0.18              |
+| Max drawdown               | **-70.7% ± 9.3%**             | -99.2% ± 6.4%                    | -99.98% ± 3.6%    | -70.7% ± 10.1%           |
+| Win rate                   | 62.9% ± 1.8% (753 trades)     | 68.7% ± 2.7% (294)               | -                 | -                        |
+| Time in market             | **19.1% ± 0.7%**              | 66.7% ± 1.6%                     | 100%              | 100%                     |
+| Final capital ($10k start) | $12.07M                       | $2.89M                           | $18.1k            | $0.11M                   |
 
 **SPXL, 1993-02 to 2026-07** (extended via SPY, so it spans two crashes):
 
-| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        |
-| -------------------------- | ----------------------------- | -------------------------------- | ----------------- |
-| CAGR                       | **22.6% ± 5.7%**              | 18.7% ± 8.2%                     | 13.9% ± 10.3%     |
-| Sharpe ratio               | **0.83 ± 0.16**               | 0.60 ± 0.15                      | 0.51 ± 0.16       |
-| Max drawdown               | **-51.5% ± 9.5%**             | -91.4% ± 9.0%                    | -98.2% ± 7.9%     |
-| Time in market             | **18.7% ± 0.6%**              | 63.4% ± 1.5%                     | 100%              |
-| Final capital ($10k start) | $9.23M                        | $3.08M                           | $0.77M            |
+| Metric                     | IBS 0.13 / 0.5 (default)      | IBS 0.132 / 0.965 (patient exit) | Buy & hold        | SPY 0.91x (risk-matched) |
+| -------------------------- | ----------------------------- | -------------------------------- | ----------------- | ------------------------ |
+| CAGR                       | **22.6% ± 5.7%**              | 18.7% ± 8.2%                     | 13.9% ± 10.3%     | 10.1% ± 2.8%             |
+| Sharpe ratio               | **0.83 ± 0.16**               | 0.60 ± 0.15                      | 0.51 ± 0.16       | 0.65 ± 0.16              |
+| Max drawdown               | **-51.5% ± 9.5%**             | -91.4% ± 9.0%                    | -98.2% ± 7.9%     | -51.5% ± 9.1%            |
+| Time in market             | **18.7% ± 0.6%**              | 63.4% ± 1.5%                     | 100%              | 100%                     |
+| Final capital ($10k start) | $9.23M                        | $3.08M                           | $0.77M            | $0.25M                   |
 
 Read with the error bars, the tables say something sharper than the point estimates alone. The default's CAGR *advantage* over the patient exit (29.6 vs 23.0 on TQQQ, 22.6 vs 18.7 on SPXL) sits inside a single standard error - not statistically distinguishable - while its drawdown advantage (-70.7% vs -99.2%, -51.5% vs -91.4%) is two to three SE clear. The strategy's real, measurable edge over holding longer is **lower risk, not higher return** - the risk-transformer thesis, now with the noise quantified. (The Sharpe error bars, ±0.14 to ±0.24, also match the `1/sqrt(years)` rule of thumb from the resolution analysis.)
+
+This is where that column pays off. The raw buy & hold CAGR reads 41%, 2%, and 14% across the three windows - a verdict set almost entirely by whether the window opens before a crash or after one, not by anything the strategy does. Levering the plain index to the default's *own* drawdown strips out that endpoint luck, and what remains is the edge: across both crash-containing windows the strategy clears risk-matched passive by 12 to 21 CAGR points *and* on Sharpe (TQQQ 29.6% vs 9.0%, 0.79 vs 0.53; SPXL 22.6% vs 10.1%, 0.83 vs 0.65), at a drawdown identical by construction. One caveat keeps it honest: max drawdown is a single noisy point on the curve, and matching on *volatility* instead pushes passive QQQ to 1.69x - which trails the strategy less on CAGR (11.5%) than on survival (-96.9% drawdown). You cannot lever a plain index to this strategy's risk without courting ruin, because it spends its risk budget in episodic bites while a leveraged hold carries it continuously through every crash.
 
 Note too that the win rate moves the *wrong* way for the better configuration (62.9% vs 68.7% on TQQQ). That is not a defect: an exit that almost never fires leaves losing positions open rather than realizing them, so the losses reappear as the -99.2% drawdown instead of as red trades. A high win rate beside a catastrophic tail is the signature of a strategy that hides losses rather than avoiding them.
 
