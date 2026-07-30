@@ -40,14 +40,14 @@ def test_parser_wires_subcommands():
     assert args.lookback == 365
 
 
-def test_default_thresholds_are_crash_aware():
+def test_default_thresholds():
     from ibs_strategy.backtest import DEFAULT_ENTRY_THRESHOLD, DEFAULT_EXIT_THRESHOLD
 
-    # chosen on crash-inclusive history by minimax Sharpe across TQQQ and SPXL,
-    # and kept deliberately round -- the plateau is flat, so a third digit
-    # would encode noise rather than information
+    # structural, not fitted: entry 0.13 selects the bottom-decile forward-return
+    # edge; exit 0.5 is the zero-DOF prompt midpoint exit (the edge is front-loaded
+    # and an optimized exit doesn't replicate). Both deliberately round.
     assert DEFAULT_ENTRY_THRESHOLD == 0.13
-    assert DEFAULT_EXIT_THRESHOLD == 0.80
+    assert DEFAULT_EXIT_THRESHOLD == 0.5
 
     args = build_parser().parse_args(["backtest", "TQQQ"])
     assert args.entry == DEFAULT_ENTRY_THRESHOLD

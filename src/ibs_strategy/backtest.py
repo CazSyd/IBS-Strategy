@@ -43,15 +43,18 @@ __all__ = [
 
 REQUIRED_COLUMNS = ("Open", "Close", "IBS")
 
-# Crash-aware thresholds: the flat region that holds up on BOTH TQQQ (1999+)
-# and SPXL (1993+) once the dot-com and GFC crashes are in the sample, scored
-# by the worse of the two Sharpe ratios rather than by CAGR. Deliberately round
-# -- the surrounding plateau is flat enough that a third digit would be noise.
-# The crash-free 2010+ window instead favours a patient 0.965 exit (see the
-# README): that pick draws down 99% through 2000-2002, which is why it is no
-# longer the default.
+# Defaults are structural, not fitted -- an optimized threshold pair does not
+# replicate out-of-sample (the surface is noise; see the README).
+# Entry 0.13 buys the bottom ~12% of IBS days, where a replicating forward-return
+# edge lives; anywhere in 0.10-0.20 is equivalent.
+# Exit 0.5 is a prompt, zero-degrees-of-freedom exit at the neutral midpoint: the
+# IBS edge is front-loaded (largely spent within a day, gone within three), so a
+# prompt exit harvests it and steps aside, keeping the strategy in cash ~80% of
+# the time and truncating crashes. A stop loss only makes a mean-reversion system
+# worse. The crash-free 2010+ window alone would favour a patient 0.965 exit that
+# then draws down 99% through 2000-2002.
 DEFAULT_ENTRY_THRESHOLD = 0.13
-DEFAULT_EXIT_THRESHOLD = 0.80
+DEFAULT_EXIT_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
