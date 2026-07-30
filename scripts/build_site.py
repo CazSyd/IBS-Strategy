@@ -69,8 +69,20 @@ __CARDS__
 CARD_TEMPLATE = (
     '  <a class="card" href="__HREF__"><span class="ticker">__TICKER__</span>'
     '<span class="signal" style="color:__COLOR__">__SIGNAL__</span>'
-    '<span class="detail">IBS __IBS__ on __DATE__</span></a>'
+    '<span class="detail">IBS __IBS__ on __DATE____SIZE__</span></a>'
 )
+
+
+def _deploy_fraction(result, report) -> str:
+    """' · size 62%' fragment: the vol-targeted fraction of capital to deploy on
+    the current signal, or '' if unavailable."""
+    if result.weights is None:
+        return ""
+    try:
+        weight = float(result.weights.loc[report.bar_date])
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return f" · size {weight:.0%}"
 
 
 def main(argv: list[str]) -> None:
@@ -92,6 +104,7 @@ def main(argv: list[str]) -> None:
             .replace("__SIGNAL__", report.signal)
             .replace("__IBS__", f"{report.ibs:.3f}")
             .replace("__DATE__", f"{report.bar_date:%Y-%m-%d}")
+            .replace("__SIZE__", _deploy_fraction(result, report))
         )
 
     index = (
