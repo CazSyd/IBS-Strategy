@@ -110,6 +110,15 @@ print(response, response_gradient(response), sep="\n")
 
 Caveats worth keeping attached. The effect lives almost entirely in the bottom quintile - the middle buckets are noise, so this is closer to an extreme-value effect than a smooth dose-response, and the rank correlations partly reflect that. Daily equity returns are fat-tailed enough to flatter t-statistics. The bottom decile on TQQQ is not individually significant (t=1.00); only pooling it with the next decile is. And the **exit** threshold gets no support from this test at all - forward returns in bucket 8 are positive on both S&P instruments, so 0.80 likely exits early. It is justified by drawdown control, not by predictive power.
 
+#### Reaching further back (and the data-quality guard)
+
+Because resolution is a sample-size problem, more history is the one lever that helps. The S&P 500 index (`^GSPC`) is the obvious candidate - but auditing it first turned up two traps that would have silently corrupted the result, and both are now guarded in code:
+
+- **Reconstructed ranges.** Genuine intraday IBS on Yahoo's `^GSPC` begins in **1982**, not the index's 1957 launch: earlier bars carry synthetic ranges (IBS std ~0.16 vs a genuine ~0.32, and _zero_ days closing exactly at the high or low). The cutoff is sharp - 1981 fails, 1982 passes - and coincides with the launch of S&P 500 futures, the likely backfill source. Trusting the earlier bars naively flips the sign to spurious momentum. `assess_ibs_quality(data)` reports the tell per year; `decile_response(..., require_genuine=True)` refuses a frame that contains such periods. Because IBS is range-normalized, a genuinely low-volatility instrument still passes - only reconstructed ranges fail.
+- **Synthetic opens.** `^GSPC` reports `Open == previous Close` until ~2010, which collapses the open-to-close forward return into a close-to-close return whose base price is the same `Close_t` that drives the IBS signal - a shared-price artifact that inflated the modern edge ~40%. `decile_response(..., gap_immune=True)` measures a one-day-displaced return that never touches `Close_t`; over the 1993+ overlap it recovers SPY's clean number almost exactly (+0.085% vs +0.088%), confirming the fix.
+
+With both guards, **1982-1992 is a clean, previously-untested 11 years and it confirms the edge out of sample**: gap-immune bottom-quintile forward return **+0.118% (t=2.06)**, inclusive of the 1987 crash. It does _not_ resolve the threshold surface, though - 11 extra years tightens the Sharpe standard error by only ~13%, nowhere near enough, consistent with the scale-invariance argument above. Genuinely extending the sample needs a better source (S&P 500 futures carry real OHLC from 1982), not Yahoo's index.
+
 ### Why the thresholds are not optimized
 
 Fitting the Sharpe surface on the first and second halves of the history separately and correlating them gives **-0.07 on TQQQ and -0.01 on SPXL**. The shape of the surface in one half predicts nothing about the other, and a peak scoring Sharpe 1.25 in-sample scores **0.30** on the unseen half.
@@ -231,7 +240,7 @@ One-time setup after pushing: in the repo's **Settings → Pages**, set **Source
 │   ├── backtest.py           # event-driven backtest engine
 │   ├── metrics.py            # notebook metric definitions
 │   ├── optimize.py           # grid search + purged walk-forward
-│   ├── edge.py               # IBS decile forward-return test (does the signal predict?)
+│   ├── edge.py               # IBS decile forward-return test + OHLC data-quality guard
 │   ├── synthetic.py          # synthetic pre-listing history (3x QQQ back to 1999)
 │   ├── visualize.py          # trades, equity, drawdown, heatmap, walk-forward charts
 │   ├── live.py               # realtime BUY/SELL/HOLD signal check
