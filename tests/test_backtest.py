@@ -111,6 +111,52 @@ def test_no_signals_leaves_capital_flat():
     assert result.summary()["sharpe"] == 0.0
 
 
+def test_regime_all_on_is_a_no_op(scenario_frame):
+    baseline = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    always_on = pd.Series(True, index=scenario_frame.index)
+    for regime_exit in (False, True):
+        gated = run_backtest(
+            scenario_frame, 0.2, 0.9, 1_000.0, regime=always_on, regime_exit=regime_exit
+        )
+        assert gated.equity.tolist() == baseline.equity.tolist()
+        assert len(gated.trades) == len(baseline.trades)
+
+
+def test_regime_gates_entries_only(scenario_frame):
+    # flag off at bar 0 blocks the first entry; the bar-4 signal still fires
+    regime = pd.Series(True, index=scenario_frame.index)
+    regime.iloc[0] = False
+    result = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, regime=regime)
+    assert [trade.entry_date for trade in result.trades] == [scenario_frame.index[5]]
+    assert result.trades[0].shares == 10  # 1000 // 100 at the bar-5 open
+    assert result.equity.tolist() == [1000.0] * 5 + [1000.0, 930.0, 950.0, 960.0]
+
+    # dates missing from the regime series count as off: the second entry is blocked
+    partial = pd.Series(True, index=scenario_frame.index[:4])
+    result = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, regime=partial)
+    assert [trade.exit_date for trade in result.trades] == [scenario_frame.index[4]]
+    assert result.equity.tolist() == [1000.0, 1050.0, 1080.0, 1160.0] + [1170.0] * 5
+
+
+def test_regime_exit_forces_liquidation_at_the_next_open(scenario_frame):
+    regime = pd.Series(True, index=scenario_frame.index)
+    regime.iloc[2] = False  # observed at bar 2's close -> acted on at bar 3's open
+
+    # without regime_exit the flag only gates entries; nothing changes here
+    passive = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, regime=regime)
+    baseline = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    assert passive.equity.tolist() == baseline.equity.tolist()
+
+    forced = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, regime=regime, regime_exit=True)
+    first = forced.trades[0]
+    assert first.exit_date == scenario_frame.index[3]
+    assert first.exit_price == 104.0  # bar 3's open, not the bar-4 IBS exit at 112
+    assert forced.data["Regime"].tolist() == [True, True, False] + [True] * 6
+    assert forced.equity.tolist() == [
+        1000.0, 1050.0, 1080.0, 1090.0, 1090.0, 1090.0, 1020.0, 1040.0, 1050.0,
+    ]
+
+
 def test_requires_columns():
     frame = pd.DataFrame({"Open": [1.0, 2.0]})
     with pytest.raises(ValueError, match="missing"):

@@ -11,6 +11,9 @@ Mechanics (a faithful port of the notebook's ``IBS_strategy``):
   defaults to zero -- the notebook's assumption -- but a strategy that sits
   flat most of the time is materially understated at 0%, so the CLI passes a
   real T-bill series by default.
+- An optional ``regime`` flag (e.g. index close above its 200-day SMA) gates
+  entries, and with ``regime_exit`` also liquidates when the flag drops. Like
+  IBS, the flag is read from the *previous* bar and acted on at today's open.
 """
 
 from __future__ import annotations
@@ -141,6 +144,8 @@ def run_backtest(
     exit_threshold: float = DEFAULT_EXIT_THRESHOLD,
     initial_capital: float = 10_000.0,
     cash_rate: pd.Series | float | None = None,
+    regime: pd.Series | None = None,
+    regime_exit: bool = False,
 ) -> BacktestResult:
     """Run the IBS strategy over ``data`` (requires Open, Close and IBS columns).
 
@@ -148,6 +153,12 @@ def run_backtest(
     aligned on ``data``'s index, or None for the notebook's 0% assumption.
     Interest accrues on the cash balance *before* the bar's fill, so a day
     spent fully invested earns none.
+
+    ``regime`` is an optional boolean Series (aligned on ``data``'s index;
+    missing dates count as off). Entries require the *previous* bar's flag to
+    be on -- the same no-look-ahead timing as the IBS signal -- and with
+    ``regime_exit=True`` an open position is also sold at the next open once
+    the flag turns off.
     """
     missing = [column for column in REQUIRED_COLUMNS if column not in data.columns]
     if missing:
@@ -161,6 +172,15 @@ def run_backtest(
     close_prices = df["Close"].to_numpy(dtype=float)
     ibs = df["IBS"].to_numpy(dtype=float)
     n = len(df)
+
+    if regime is None:
+        regime_ok = np.ones(n, dtype=bool)
+    elif isinstance(regime, pd.Series):
+        regime_ok = regime.reindex(df.index).fillna(False).astype(bool).to_numpy()
+    else:
+        regime_ok = np.asarray(regime, dtype=bool)
+        if regime_ok.shape != (n,):
+            raise ValueError("regime must provide one flag per bar of data")
 
     position = np.zeros(n, dtype=int)
     shares_held = np.zeros(n, dtype=float)
@@ -179,17 +199,18 @@ def run_backtest(
 
     for i in range(1, n):
         prev_ibs = ibs[i - 1]  # NaN (High == Low bar) compares False both ways -> hold
+        prev_regime = regime_ok[i - 1]
         open_price = open_prices[i]
         cash *= cash_factors[i]  # idle cash earns overnight, before today's fill
 
-        if not in_position and prev_ibs < entry_threshold:
+        if not in_position and prev_regime and prev_ibs < entry_threshold:
             shares = int(cash // open_price)
             if shares > 0:
                 cash -= shares * open_price
                 in_position = True
                 entry_date = df.index[i]
                 entry_price = open_price
-        elif in_position and prev_ibs > exit_threshold:
+        elif in_position and (prev_ibs > exit_threshold or (regime_exit and not prev_regime)):
             cash += shares * open_price
             trades.append(Trade(entry_date, entry_price, shares, df.index[i], open_price))
             shares = 0
@@ -203,6 +224,8 @@ def run_backtest(
     if in_position:
         trades.append(Trade(entry_date, entry_price, shares))
 
+    if regime is not None:
+        df["Regime"] = regime_ok
     df["Position"] = position
     df["Shares"] = shares_held
     df["Cash"] = cash_held
