@@ -14,6 +14,7 @@ from pathlib import Path
 from ibs_strategy import (
     DEFAULT_ENTRY_THRESHOLD,
     DEFAULT_EXIT_THRESHOLD,
+    DEFAULT_TARGET_VOL,
     latest_signal,
     run_backtest,
 )
@@ -56,7 +57,9 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   <p class="updated">Updated __UPDATED__</p>
 __CARDS__
   <footer>Signals classify the previous completed session at the default thresholds
-  (entry &lt; __ENTRY__, exit &gt; __EXIT__). Educational use only - not financial advice.
+  (entry &lt; __ENTRY__, exit &gt; __EXIT__); each page's "size" is the fraction of capital to
+  deploy, volatility-targeted to ~__TARGETVOL__ annualized so the position shrinks when the
+  market is turbulent. Educational use only - not financial advice.
   Source: <a href="https://github.com/CazSyd/IBS-Strategy">CazSyd/IBS-Strategy</a>.</footer>
 </main>
 </body>
@@ -78,7 +81,7 @@ def main(argv: list[str]) -> None:
     cards = []
     for ticker in tickers:
         report = latest_signal(ticker)
-        result = run_backtest(report.data)
+        result = run_backtest(report.data, position_sizing="vol_target")
         page = render_signal_page(result, ticker, report, output / f"{ticker.lower()}.html")
         print(f"{report.message} -> {page.name}")
         cards.append(
@@ -97,6 +100,7 @@ def main(argv: list[str]) -> None:
         .replace("__CARDS__", "\n".join(cards))
         .replace("__ENTRY__", f"{DEFAULT_ENTRY_THRESHOLD:g}")
         .replace("__EXIT__", f"{DEFAULT_EXIT_THRESHOLD:g}")
+        .replace("__TARGETVOL__", f"{DEFAULT_TARGET_VOL:.0%}")
     )
     (output / "index.html").write_text(index, encoding="utf-8")
     print(f"Site written to {output.resolve()}")

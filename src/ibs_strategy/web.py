@@ -519,17 +519,38 @@ def build_signal_figure(
     return fig
 
 
+def _sizing_meta(result: BacktestResult, report: SignalReport | None) -> str:
+    """A ' · vol-target 40% (size 62%)' fragment when the result is vol-sized.
+
+    The size is the weight the strategy would deploy on the report's bar given
+    its trailing realized volatility -- what to put on if you act on the signal.
+    """
+    if result.position_sizing != "vol_target":
+        return ""
+    label = f" · vol-target {result.target_vol:.0%}"
+    if result.weights is not None and report is not None:
+        try:
+            weight = float(result.weights.loc[report.bar_date])
+        except (KeyError, TypeError, ValueError):
+            weight = float("nan")
+        if weight == weight:  # not NaN
+            label += f" (size {weight:.0%})"
+    return label
+
+
 def _header_left(result: BacktestResult, ticker: str, report: SignalReport | None) -> str:
     thresholds = (
         f"entry &lt; {result.entry_threshold:g} · exit &gt; {result.exit_threshold:g}"
     )
+    sizing = _sizing_meta(result, report)
     if report is None:
-        return f'<span class="ticker">{ticker}</span><span class="meta">{thresholds}</span>'
+        return f'<span class="ticker">{ticker}</span><span class="meta">{thresholds}{sizing}</span>'
     color = SIGNAL_COLORS.get(report.signal, INK_MUTED)
     return (
         f'<span class="ticker">{ticker}</span>'
         f'<span class="badge" style="color:{color}">{report.signal}</span>'
-        f'<span class="meta">IBS {report.ibs:.3f} · {report.bar_date:%Y-%m-%d} · {thresholds}</span>'
+        f'<span class="meta">IBS {report.ibs:.3f} · {report.bar_date:%Y-%m-%d} · '
+        f'{thresholds}{sizing}</span>'
     )
 
 

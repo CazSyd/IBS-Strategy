@@ -1,4 +1,5 @@
 from ibs_strategy.backtest import run_backtest
+from ibs_strategy.live import signal_from_frame
 from ibs_strategy.web import build_signal_figure, render_signal_page
 
 
@@ -72,3 +73,16 @@ def test_render_writes_self_contained_html(tmp_path, scenario_frame):
 
     # phones start zoomed to 3 months -- a year of candles is unreadable there
     assert "setMonths(3, document.querySelector" in html
+
+
+def test_signal_page_shows_vol_target_sizing(tmp_path, scenario_frame):
+    report = signal_from_frame(scenario_frame, "TEST", 0.2, 0.9)
+
+    vt = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0,
+                      position_sizing="vol_target", target_vol=0.5, vol_window=3)
+    vt_html = render_signal_page(vt, "TEST", report, path=tmp_path / "vt.html").read_text("utf-8")
+    assert "vol-target 50%" in vt_html  # sizing surfaced in the page header
+
+    full = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    full_html = render_signal_page(full, "TEST", report, path=tmp_path / "full.html").read_text("utf-8")
+    assert "vol-target" not in full_html  # all-in page never advertises a target

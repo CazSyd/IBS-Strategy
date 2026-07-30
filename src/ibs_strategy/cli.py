@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 
 from . import __version__
-from .backtest import DEFAULT_ENTRY_THRESHOLD, DEFAULT_EXIT_THRESHOLD, run_backtest
+from .backtest import (
+    DEFAULT_ENTRY_THRESHOLD,
+    DEFAULT_EXIT_THRESHOLD,
+    DEFAULT_TARGET_VOL,
+    DEFAULT_VOL_WINDOW,
+    run_backtest,
+)
 from .data import CASH_RATE_TICKER, load_cash_rate, load_data
 from .live import DEFAULT_LOOKBACK_DAYS, latest_signal
 from .metrics import cagr, total_return
@@ -138,9 +144,14 @@ def cmd_backtest(args) -> None:
     result = run_backtest(
         data, args.entry, args.exit, args.capital, _cash_rate(args),
         entry_fill=args.entry_fill, exit_fill=args.exit_fill,
+        position_sizing=args.position_sizing, target_vol=args.target_vol,
+        vol_window=args.vol_window,
     )
+    sizing = (f"vol-target {args.target_vol:g} ({args.vol_window}d realized)"
+              if args.position_sizing == "vol_target" else "full")
     print(f"Thresholds: entry < {args.entry:g}, exit > {args.exit:g}"
-          f" | fills: entry {args.entry_fill}, exit {args.exit_fill}")
+          f" | fills: entry {args.entry_fill}, exit {args.exit_fill}"
+          f" | sizing: {sizing}")
     _print_summary("Backtest metrics", result.summary())
     _buy_hold_line(data["Close"], "Buy & hold over the same period")
     fig = plot_backtest(result, ticker=args.ticker)
@@ -216,13 +227,26 @@ def cmd_walkforward(args) -> None:
 def cmd_signal(args) -> None:
     report = latest_signal(args.ticker, args.entry, args.exit, lookback_days=args.lookback)
     print(report.message)
+    result = run_backtest(
+        report.data, args.entry, args.exit,
+        position_sizing=args.position_sizing, target_vol=args.target_vol,
+        vol_window=args.vol_window,
+    )
+    sizing_note = ""
+    if args.position_sizing == "vol_target":
+        sizing_note = f" | vol-target {args.target_vol:g}"
+        if result.weights is not None:
+            try:
+                weight = float(result.weights.loc[report.bar_date])
+                sizing_note += f" -> deploy {weight:.0%} of capital"
+            except (KeyError, TypeError, ValueError):
+                pass
     print(
         f"  Bar used: {report.bar_date:%Y-%m-%d} | IBS {report.ibs:.3f} | "
-        f"entry < {args.entry:g}, exit > {args.exit:g}"
+        f"entry < {args.entry:g}, exit > {args.exit:g}{sizing_note}"
     )
     if args.no_plot:
         return
-    result = run_backtest(report.data, args.entry, args.exit)
     if args.save is not None:
         args.save.mkdir(parents=True, exist_ok=True)
         path = render_signal_page(
@@ -295,6 +319,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "(captures the overnight move; needs a market-on-close order)")
     p.add_argument("--exit-fill", choices=("open", "close"), default="open",
                    help="fill the exit at the next open (default) or the signal bar's close")
+    p.add_argument("--position-sizing", choices=("full", "vol_target"), default="full",
+                   help="'full' all-in whole shares (default), or 'vol_target' to scale each "
+                        "entry to a target annualized volatility (caps at all-in, never "
+                        "levered; cuts crash drawdown at higher risk-adjusted return)")
+    p.add_argument("--target-vol", type=float, default=DEFAULT_TARGET_VOL, metavar="VOL",
+                   help=f"annualized volatility target for --position-sizing vol_target "
+                        f"(default {DEFAULT_TARGET_VOL:g})")
+    p.add_argument("--vol-window", type=int, default=DEFAULT_VOL_WINDOW, metavar="N",
+                   help=f"trailing bars of realized volatility for vol-target sizing "
+                        f"(default {DEFAULT_VOL_WINDOW})")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("optimize", help="grid-search entry/exit thresholds (in-sample) with a heatmap")
@@ -324,6 +358,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK_DAYS,
                    help="calendar days of history shown in the chart "
                         f"(default {DEFAULT_LOOKBACK_DAYS})")
+    p.add_argument("--position-sizing", choices=("full", "vol_target"), default="vol_target",
+                   help="'vol_target' (default, matching the live page) scales the position to "
+                        "a target annualized volatility so it shrinks in turbulent markets; "
+                        "'full' goes all-in")
+    p.add_argument("--target-vol", type=float, default=DEFAULT_TARGET_VOL, metavar="VOL",
+                   help=f"annualized volatility target for vol_target sizing (default {DEFAULT_TARGET_VOL:g})")
+    p.add_argument("--vol-window", type=int, default=DEFAULT_VOL_WINDOW, metavar="N",
+                   help=f"trailing bars of realized volatility (default {DEFAULT_VOL_WINDOW})")
     add_output(p)
     p.set_defaults(func=cmd_signal)
 

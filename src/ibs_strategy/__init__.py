@@ -8,6 +8,8 @@ walk-forward validation, matplotlib charts, and a live signal check.
 from .backtest import (
     DEFAULT_ENTRY_THRESHOLD,
     DEFAULT_EXIT_THRESHOLD,
+    DEFAULT_TARGET_VOL,
+    DEFAULT_VOL_WINDOW,
     BacktestResult,
     Trade,
     run_backtest,
@@ -55,6 +57,8 @@ __all__ = [
     "__version__",
     "DEFAULT_ENTRY_THRESHOLD",
     "DEFAULT_EXIT_THRESHOLD",
+    "DEFAULT_TARGET_VOL",
+    "DEFAULT_VOL_WINDOW",
     "BacktestResult",
     "Trade",
     "run_backtest",

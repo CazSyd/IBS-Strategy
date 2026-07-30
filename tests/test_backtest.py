@@ -207,3 +207,38 @@ def test_invalid_fill_raises(scenario_frame):
         run_backtest(scenario_frame, 0.2, 0.9, entry_fill="midpoint")
     with pytest.raises(ValueError, match="exit_fill"):
         run_backtest(scenario_frame, 0.2, 0.9, exit_fill="vwap")
+
+
+def test_position_sizing_full_is_a_noop(scenario_frame):
+    base = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    full = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, position_sizing="full")
+    assert full.equity.tolist() == base.equity.tolist()
+    assert full.data["Shares"].tolist() == base.data["Shares"].tolist()
+
+
+def test_invalid_position_sizing_raises(scenario_frame):
+    with pytest.raises(ValueError, match="position_sizing"):
+        run_backtest(scenario_frame, 0.2, 0.9, position_sizing="kelly")
+    with pytest.raises(ValueError, match="target_vol"):
+        run_backtest(scenario_frame, 0.2, 0.9, position_sizing="vol_target", target_vol=0.0)
+    with pytest.raises(ValueError, match="vol_window"):
+        run_backtest(scenario_frame, 0.2, 0.9, position_sizing="vol_target", vol_window=1)
+
+
+def test_vol_target_sizes_down_in_high_vol():
+    # identical signal + entry bars; only the trailing closes (hence realized vol)
+    # differ, so vol-target sizing must buy fewer shares on the volatile history.
+    calm = [(c, c + 3.0, c - 3.0, c) for c in (100.0, 100.2, 100.1, 100.2)]
+    wild = [(c, c + 3.0, c - 3.0, c) for c in (100.0, 112.0, 90.0, 106.0)]
+    signal = (100.0, 101.0, 99.0, 99.2)   # IBS 0.10 -> entry signal
+    entry = (100.0, 102.0, 98.0, 100.0)   # IBS 0.50, filled at the open (100)
+
+    kw = dict(position_sizing="vol_target", target_vol=0.5, vol_window=3)
+    calm_sized = run_backtest(make_ohlc(calm + [signal, entry]), 0.2, 0.9, 1_000.0, **kw)
+    wild_sized = run_backtest(make_ohlc(wild + [signal, entry]), 0.2, 0.9, 1_000.0, **kw)
+    full = run_backtest(make_ohlc(calm + [signal, entry]), 0.2, 0.9, 1_000.0)
+
+    # calm history -> realized vol below target -> weight caps at 1.0 -> full size
+    assert calm_sized.trades[0].shares == full.trades[0].shares == 10
+    # volatile history -> weight well below 1.0 -> materially fewer shares, capped never levered
+    assert 0 < wild_sized.trades[0].shares < calm_sized.trades[0].shares

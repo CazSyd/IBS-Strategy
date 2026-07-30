@@ -26,6 +26,7 @@ def test_parser_wires_subcommands():
     assert args.entry == 0.15
     assert args.no_plot is True
     assert args.start is None  # default: full listing history
+    assert args.position_sizing == "full"  # backtest stays all-in by default
     assert callable(args.func)
 
     args = parser.parse_args(["walkforward", "SPXL", "--folds", "4", "--purge", "3"])
@@ -38,6 +39,8 @@ def test_parser_wires_subcommands():
 
     args = parser.parse_args(["signal", "TQQQ"])
     assert args.lookback == 365
+    assert args.position_sizing == "vol_target"  # the live page defaults to vol sizing
+    assert args.target_vol == pytest.approx(0.40)
 
 
 def test_default_thresholds():

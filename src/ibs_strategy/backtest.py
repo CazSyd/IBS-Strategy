@@ -7,7 +7,9 @@ Mechanics (a faithful port of the notebook's ``IBS_strategy``):
 - Fills default to the *current* bar's open, so there is no look-ahead;
   ``entry_fill``/``exit_fill="close"`` instead transacts at the signal bar's
   close (capturing the overnight move, at the cost of close-auction execution).
-- Sizing is all-in with whole shares; leftover cash stays uninvested.
+- Sizing is all-in with whole shares by default; ``position_sizing="vol_target"``
+  instead scales each entry to a target annualized volatility (capped at all-in,
+  never levered), parking the remainder in cash. Leftover cash stays uninvested.
 - Equity is marked to market at each bar's close. No commissions or slippage.
 - Idle cash earns ``cash_rate`` (annualized, accrued per trading bar). It
   defaults to zero -- the notebook's assumption -- but a strategy that sits
@@ -37,6 +39,8 @@ from .metrics import (
 __all__ = [
     "DEFAULT_ENTRY_THRESHOLD",
     "DEFAULT_EXIT_THRESHOLD",
+    "DEFAULT_TARGET_VOL",
+    "DEFAULT_VOL_WINDOW",
     "Trade",
     "BacktestResult",
     "cash_growth_factors",
@@ -57,6 +61,13 @@ REQUIRED_COLUMNS = ("Open", "Close", "IBS")
 # then draws down 99% through 2000-2002.
 DEFAULT_ENTRY_THRESHOLD = 0.13
 DEFAULT_EXIT_THRESHOLD = 0.5
+
+# Vol-target sizing defaults: scale each entry to ~40% annualized instrument
+# volatility over a 20-bar trailing window. This is the risk-reducing sweet spot
+# from the analysis (halves the crash drawdown at a higher Sharpe); it is the
+# signal page's default, though run_backtest itself stays all-in ("full").
+DEFAULT_TARGET_VOL = 0.40
+DEFAULT_VOL_WINDOW = 20
 
 
 @dataclass(frozen=True)
@@ -93,6 +104,10 @@ class BacktestResult:
     entry_threshold: float
     exit_threshold: float
     initial_capital: float
+    position_sizing: str = "full"
+    target_vol: float = DEFAULT_TARGET_VOL
+    vol_window: int = DEFAULT_VOL_WINDOW
+    weights: pd.Series | None = None  # per-bar entry weight under vol_target, else None
 
     @property
     def equity(self) -> pd.Series:
@@ -153,6 +168,9 @@ def run_backtest(
     regime_exit: bool = False,
     entry_fill: str = "open",
     exit_fill: str = "open",
+    position_sizing: str = "full",
+    target_vol: float = DEFAULT_TARGET_VOL,
+    vol_window: int = DEFAULT_VOL_WINDOW,
 ) -> BacktestResult:
     """Run the IBS strategy over ``data`` (requires Open, Close and IBS columns).
 
@@ -174,6 +192,14 @@ def run_backtest(
     session (the IBS reversion begins overnight), but assumes you can transact at
     the close -- in practice a market-on-close order, whose fill you cannot know
     when you submit it. See the README on the resulting execution slippage.
+
+    ``position_sizing`` defaults to ``"full"`` (all-in whole shares). Set it to
+    ``"vol_target"`` to scale each entry by the instrument's trailing
+    ``vol_window``-bar realized volatility: the deployed fraction is
+    ``min(1, target_vol / realized_vol)`` (annualized), capped at all-in so the
+    position is never levered, with the remainder held as cash. This cuts the
+    crash-tail drawdown at a higher risk-adjusted return than a smaller constant
+    size would; entry/exit *timing* is unchanged. See the README.
     """
     missing = [column for column in REQUIRED_COLUMNS if column not in data.columns]
     if missing:
@@ -183,6 +209,15 @@ def run_backtest(
     for name, value in (("entry_fill", entry_fill), ("exit_fill", exit_fill)):
         if value not in ("open", "close"):
             raise ValueError(f"{name} must be 'open' or 'close', got {value!r}")
+    if position_sizing not in ("full", "vol_target"):
+        raise ValueError(
+            f"position_sizing must be 'full' or 'vol_target', got {position_sizing!r}"
+        )
+    if position_sizing == "vol_target":
+        if not target_vol > 0:
+            raise ValueError(f"target_vol must be positive, got {target_vol!r}")
+        if vol_window < 2:
+            raise ValueError(f"vol_window must be at least 2, got {vol_window!r}")
 
     df = data.copy()
     cash_factors = cash_growth_factors(df, cash_rate)
@@ -190,6 +225,18 @@ def run_backtest(
     close_prices = df["Close"].to_numpy(dtype=float)
     ibs = df["IBS"].to_numpy(dtype=float)
     n = len(df)
+
+    if position_sizing == "vol_target":
+        returns = df["Close"].pct_change()
+        realized_vol = (
+            returns.rolling(vol_window).std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+        ).to_numpy()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            weights = np.clip(target_vol / realized_vol, 0.0, 1.0)
+        # undefined early vol (< vol_window bars) and flat stretches fall back to all-in
+        weights = np.where(np.isfinite(realized_vol) & (realized_vol > 0.0), weights, 1.0)
+    else:
+        weights = np.ones(n, dtype=float)
 
     if regime is None:
         regime_ok = np.ones(n, dtype=bool)
@@ -224,7 +271,7 @@ def run_backtest(
 
         # fills at the OPEN act on the *previous* bar's signal (no look-ahead)
         if entry_fill == "open" and not in_position and prev_regime and prev_ibs < entry_threshold:
-            shares = int(cash // open_price)
+            shares = int(weights[i - 1] * cash // open_price)
             if shares > 0:
                 cash -= shares * open_price
                 in_position = True
@@ -240,7 +287,7 @@ def run_backtest(
 
         # fills at the CLOSE act on *this* bar's signal, transacting at its close
         if entry_fill == "close" and not in_position and regime_ok[i] and ibs[i] < entry_threshold:
-            shares = int(cash // close_price)
+            shares = int(weights[i] * cash // close_price)
             if shares > 0:
                 cash -= shares * close_price
                 in_position = True
@@ -276,4 +323,10 @@ def run_backtest(
         entry_threshold=float(entry_threshold),
         exit_threshold=float(exit_threshold),
         initial_capital=float(initial_capital),
+        position_sizing=position_sizing,
+        target_vol=float(target_vol),
+        vol_window=int(vol_window),
+        weights=(
+            pd.Series(weights, index=df.index) if position_sizing == "vol_target" else None
+        ),
     )
