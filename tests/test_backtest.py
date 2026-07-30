@@ -163,3 +163,47 @@ def test_requires_columns():
         run_backtest(frame, 0.2, 0.9)
     with pytest.raises(ValueError, match="two bars"):
         run_backtest(make_ohlc([(100.0, 104.0, 96.0, 100.0)]), 0.2, 0.9)
+
+
+def _fill_frame():
+    # entry signal on bar 1 (close 92), exit signal on bar 3 (close 109), separated
+    return make_ohlc([
+        (100.0, 110.0, 90.0, 100.0),  # IBS 0.50
+        (100.0, 110.0, 90.0, 92.0),   # IBS 0.10 -> entry signal
+        (100.0, 110.0, 90.0, 100.0),  # IBS 0.50 hold
+        (100.0, 110.0, 90.0, 109.0),  # IBS 0.95 -> exit signal
+        (100.0, 110.0, 90.0, 100.0),  # IBS 0.50
+    ])
+
+
+def test_fill_defaults_are_open(scenario_frame):
+    default = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
+    explicit = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0, entry_fill="open", exit_fill="open")
+    assert default.equity.tolist() == explicit.equity.tolist()
+
+
+def test_close_entry_captures_the_overnight():
+    frame = _fill_frame()
+    open_fill = run_backtest(frame, 0.2, 0.9, 1_000.0)
+    close_fill = run_backtest(frame, 0.2, 0.9, 1_000.0, entry_fill="close")
+    # open entry buys bar-2's open (100); close entry buys bar-1's close (92)
+    assert open_fill.trades[0].entry_price == 100.0
+    assert close_fill.trades[0].entry_price == 92.0
+    # both exit at bar-4's open (100), so the close entry captured the overnight gap
+    assert close_fill.trades[0].exit_price == 100.0
+    assert close_fill.trades[0].return_pct > open_fill.trades[0].return_pct
+
+
+def test_close_exit_sells_at_the_signal_bar_close():
+    frame = _fill_frame()
+    close_exit = run_backtest(frame, 0.2, 0.9, 1_000.0, exit_fill="close")
+    # exit signal is bar 3 (IBS 0.95); a close exit sells bar-3's close (109),
+    # not bar-4's open (100)
+    assert close_exit.trades[0].exit_price == 109.0
+
+
+def test_invalid_fill_raises(scenario_frame):
+    with pytest.raises(ValueError, match="entry_fill"):
+        run_backtest(scenario_frame, 0.2, 0.9, entry_fill="midpoint")
+    with pytest.raises(ValueError, match="exit_fill"):
+        run_backtest(scenario_frame, 0.2, 0.9, exit_fill="vwap")

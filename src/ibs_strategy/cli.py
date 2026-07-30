@@ -135,8 +135,12 @@ def _load(args) -> pd.DataFrame:
 
 def cmd_backtest(args) -> None:
     data = _load(args)
-    result = run_backtest(data, args.entry, args.exit, args.capital, _cash_rate(args))
-    print(f"Thresholds: entry < {args.entry:g}, exit > {args.exit:g}")
+    result = run_backtest(
+        data, args.entry, args.exit, args.capital, _cash_rate(args),
+        entry_fill=args.entry_fill, exit_fill=args.exit_fill,
+    )
+    print(f"Thresholds: entry < {args.entry:g}, exit > {args.exit:g}"
+          f" | fills: entry {args.entry_fill}, exit {args.exit_fill}")
     _print_summary("Backtest metrics", result.summary())
     _buy_hold_line(data["Close"], "Buy & hold over the same period")
     fig = plot_backtest(result, ticker=args.ticker)
@@ -286,6 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("backtest", help="backtest fixed thresholds; plot trades, equity, drawdown")
     add_common(p)
     add_thresholds(p)
+    p.add_argument("--entry-fill", choices=("open", "close"), default="open",
+                   help="fill the entry at the next open (default) or the signal bar's close "
+                        "(captures the overnight move; needs a market-on-close order)")
+    p.add_argument("--exit-fill", choices=("open", "close"), default="open",
+                   help="fill the exit at the next open (default) or the signal bar's close")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("optimize", help="grid-search entry/exit thresholds (in-sample) with a heatmap")

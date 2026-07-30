@@ -4,7 +4,9 @@ Mechanics (a faithful port of the notebook's ``IBS_strategy``):
 
 - The signal is the *previous* bar's IBS: below ``entry_threshold`` buys,
   above ``exit_threshold`` sells (both strict comparisons).
-- Fills happen at the *current* bar's open, so there is no look-ahead.
+- Fills default to the *current* bar's open, so there is no look-ahead;
+  ``entry_fill``/``exit_fill="close"`` instead transacts at the signal bar's
+  close (capturing the overnight move, at the cost of close-auction execution).
 - Sizing is all-in with whole shares; leftover cash stays uninvested.
 - Equity is marked to market at each bar's close. No commissions or slippage.
 - Idle cash earns ``cash_rate`` (annualized, accrued per trading bar). It
@@ -149,6 +151,8 @@ def run_backtest(
     cash_rate: pd.Series | float | None = None,
     regime: pd.Series | None = None,
     regime_exit: bool = False,
+    entry_fill: str = "open",
+    exit_fill: str = "open",
 ) -> BacktestResult:
     """Run the IBS strategy over ``data`` (requires Open, Close and IBS columns).
 
@@ -162,12 +166,23 @@ def run_backtest(
     be on -- the same no-look-ahead timing as the IBS signal -- and with
     ``regime_exit=True`` an open position is also sold at the next open once
     the flag turns off.
+
+    ``entry_fill`` / ``exit_fill`` choose where each leg fills: ``"open"`` (the
+    default) acts on the *previous* bar's signal at the next open -- the clean,
+    liquid, no-look-ahead convention; ``"close"`` acts on *this* bar's signal at
+    its own close. A close entry captures the overnight move into the next
+    session (the IBS reversion begins overnight), but assumes you can transact at
+    the close -- in practice a market-on-close order, whose fill you cannot know
+    when you submit it. See the README on the resulting execution slippage.
     """
     missing = [column for column in REQUIRED_COLUMNS if column not in data.columns]
     if missing:
         raise ValueError(f"data is missing required columns: {missing}")
     if len(data) < 2:
         raise ValueError("need at least two bars to backtest")
+    for name, value in (("entry_fill", entry_fill), ("exit_fill", exit_fill)):
+        if value not in ("open", "close"):
+            raise ValueError(f"{name} must be 'open' or 'close', got {value!r}")
 
     df = data.copy()
     cash_factors = cash_growth_factors(df, cash_rate)
@@ -204,18 +219,38 @@ def run_backtest(
         prev_ibs = ibs[i - 1]  # NaN (High == Low bar) compares False both ways -> hold
         prev_regime = regime_ok[i - 1]
         open_price = open_prices[i]
+        close_price = close_prices[i]
         cash *= cash_factors[i]  # idle cash earns overnight, before today's fill
 
-        if not in_position and prev_regime and prev_ibs < entry_threshold:
+        # fills at the OPEN act on the *previous* bar's signal (no look-ahead)
+        if entry_fill == "open" and not in_position and prev_regime and prev_ibs < entry_threshold:
             shares = int(cash // open_price)
             if shares > 0:
                 cash -= shares * open_price
                 in_position = True
                 entry_date = df.index[i]
                 entry_price = open_price
-        elif in_position and (prev_ibs > exit_threshold or (regime_exit and not prev_regime)):
+        elif exit_fill == "open" and in_position and (
+            prev_ibs > exit_threshold or (regime_exit and not prev_regime)
+        ):
             cash += shares * open_price
             trades.append(Trade(entry_date, entry_price, shares, df.index[i], open_price))
+            shares = 0
+            in_position = False
+
+        # fills at the CLOSE act on *this* bar's signal, transacting at its close
+        if entry_fill == "close" and not in_position and regime_ok[i] and ibs[i] < entry_threshold:
+            shares = int(cash // close_price)
+            if shares > 0:
+                cash -= shares * close_price
+                in_position = True
+                entry_date = df.index[i]
+                entry_price = close_price
+        elif exit_fill == "close" and in_position and (
+            ibs[i] > exit_threshold or (regime_exit and not regime_ok[i])
+        ):
+            cash += shares * close_price
+            trades.append(Trade(entry_date, entry_price, shares, df.index[i], close_price))
             shares = 0
             in_position = False
 
