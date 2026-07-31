@@ -173,6 +173,8 @@ The default strategy runs positive on all seven tradable 3x ETFs (SOXL 0.81 Shar
 
 **A basket diversifies the one risk a stop can't.** Each sleeve reverts on its *own* weak closes - mostly different days - so strategy returns across six low-correlation sleeves (QQQ, IWM, TLT, GLD, EEM, XLE) correlate just **0.21**. Equal-weighting them lifts Sharpe from a 0.72 single-name average to **1.14** and shrinks max drawdown from −22% to **−16%** - a higher Sharpe than any single component. The non-equity sleeves don't revert, but they don't crash *with* equities either, so they cushion the systemic tail that correlates every equity sleeve at once - the one drawdown no per-instrument exit or stop can reach.
 
+**And as a sleeve in a conventional portfolio.** The vol-target strategy correlates just **0.40** to a 60/40, so a small allocation improves it on all three axes at once: at 20% a 60/40's Sharpe rises 0.82 → 0.99 and its worst drawdown *shrinks* from -31% to -23% (100% equity: 0.66 → 0.79). The Sharpe-maximizing weight is ~40-60%, but that over-bets one leveraged strategy - **10-20% captures the diversification** without the concentration. This, not the standalone CAGR, is where the strategy earns its keep.
+
 ### Why the thresholds are not optimized
 
 Fitting the Sharpe surface on the first and second halves of the history separately and correlating them gives **-0.07 on TQQQ and -0.01 on SPXL**. The shape of the surface in one half predicts nothing about the other, and a peak scoring Sharpe 1.25 in-sample scores **0.30** on the unseen half.
@@ -180,6 +182,8 @@ Fitting the Sharpe surface on the first and second halves of the history separat
 This is not evidence the strategy is broken - only that the grid cannot be read. The SE on any single cell's annualized return is ~**±10.5% (TQQQ)** / **±6.3% (SPXL)**, larger than the 2-3 point gaps between cells, so even 27 years can't resolve one threshold pair from another and anything picked from the surface's shape is a coin flip - which is why in-sample optima deliver ~half their advertised CAGR out-of-sample, and why re-fitting per ticker [made things worse](#extended-history-where-the-defaults-were-actually-chosen).
 
 `plateau_thresholds` (`--selector plateau`) is therefore a **tie-breaker, not a discovery**: it averages each cell with its neighbours before the argmax, so it at least refuses to chase spikes. Neither number deserves three significant digits.
+
+An unreadable *grid* is not the same as a fitted *edge*, though - and a deflated Sharpe ratio (Bailey-Lopez de Prado) settles the second claim. Across 475 threshold configs on extended TQQQ the best in-sample Sharpe (0.93) sits well above the expected-max-under-null of **0.46** - the luck bar for that many trials - for a **deflated Sharpe of 0.995**; the structural default (0.80) clears the same bar at 96.7% (both after charging for the returns' fat tails, kurtosis ~39). The search finds a real edge it simply cannot pin to a specific cell: real signal, un-tunable knob.
 
 ### Metrics (as defined in the notebook)
 
