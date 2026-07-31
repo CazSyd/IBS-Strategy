@@ -116,6 +116,10 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   .badge { font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px;
            border: 1.5px solid currentColor; }
   .meta { color: var(--muted); font-size: 12.5px; }
+  .live-strip { padding: 0 14px 6px; color: var(--muted); font-size: 12px;
+                overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+  .live-strip b { color: var(--chip-ink); font-weight: 600; }
+  .live-strip:empty { display: none; }
   .head-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
   .chip { padding: 6px 11px; border-radius: 999px; border: 1px solid var(--chip-border);
           background: var(--chip-bg); color: var(--chip-ink); font: inherit; font-size: 12.5px;
@@ -148,6 +152,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     <button id="theme-toggle" class="chip" type="button">Dark</button>
   </div>
 </header>
+<div class="live-strip">__LIVE__</div>
 <div id="chart-wrap">__PLOT__</div>
 <script>
 (function () {
@@ -559,6 +564,7 @@ def render_signal_page(
     ticker: str,
     report: SignalReport | None = None,
     path: Path | None = None,
+    live_note: str = "",
 ) -> Path:
     """Write the signal page as a self-contained HTML file and return its path.
 
@@ -599,6 +605,7 @@ def render_signal_page(
         .replace("__LIGHT__", json.dumps(_LIGHT_PATCH))
         .replace("__DARK__", json.dumps(_DARK_PATCH))
         .replace("__CHART_DATA__", json.dumps(chart_data))
+        .replace("__LIVE__", live_note)
         .replace("__PLOT__", plot_div)
     )
     path.write_text(page, encoding="utf-8")

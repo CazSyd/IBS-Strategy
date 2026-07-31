@@ -6,6 +6,7 @@ Defaults: OUTPUT_DIR=site, tickers TQQQ SPXL.
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime, timezone
 from html import escape
@@ -18,7 +19,12 @@ from ibs_strategy import (
     latest_signal,
     run_backtest,
 )
+from ibs_strategy.tracking import load_signal_log, paper_trade
 from ibs_strategy.web import SIGNAL_COLORS, render_signal_page
+
+# Append-only forward signal log (committed by the workflow); the paper-trade
+# section replays it. Overridable for local testing via IBS_SIGNAL_LOG.
+SIGNAL_LOG = Path(os.environ.get("IBS_SIGNAL_LOG", "data/signals.csv"))
 
 INDEX_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -69,7 +75,7 @@ __CARDS__
 CARD_TEMPLATE = (
     '  <a class="card" href="__HREF__"><span class="ticker">__TICKER__</span>'
     '<span class="signal" style="color:__COLOR__">__SIGNAL__</span>'
-    '<span class="detail">IBS __IBS__ on __DATE____SIZE__</span></a>'
+    '<span class="detail">IBS __IBS__ on __DATE____SIZE____LIVE__</span></a>'
 )
 
 
@@ -85,6 +91,34 @@ def _deploy_fraction(result, report) -> str:
     return f" · size {weight:.0%}"
 
 
+def _live_strip(track) -> str:
+    """The per-page 'Live paper-trade' line reconstructed from the logged signals."""
+    if track.inception is None:
+        return "<b>Live paper-trade</b> - starts logging after the next close"
+    bits = [f"<b>Live paper-trade</b> since {track.inception:%Y-%m-%d}",
+            f"{track.n_sessions} sessions"]
+    if track.n_trades or track.in_position:
+        bits.append(f"<b>{track.total_return:+.1%}</b>")
+        if track.in_position:
+            pos = f"holding (size {track.entry_size:.0%}"
+            pos += f", {track.unrealized:+.1%})" if track.unrealized is not None else ")"
+            bits.append(pos)
+        else:
+            bits.append("flat")
+        win = track.win_rate
+        bits.append(f"{track.n_trades} closed"
+                    + (f", {win:.0%} win" if win is not None else ""))
+    bits.append("paper, no real capital")
+    return " · ".join(bits)
+
+
+def _card_live(track) -> str:
+    """A short ' · live +2.4%' tag for the index card, once there's something to show."""
+    if track.inception is None or (not track.n_trades and not track.in_position):
+        return ""
+    return f" · live <b>{track.total_return:+.1%}</b>"
+
+
 def main(argv: list[str]) -> None:
     output = Path(argv[0]) if argv else Path("site")
     tickers = [ticker.upper() for ticker in argv[1:]] or ["TQQQ", "SPXL"]
@@ -94,7 +128,11 @@ def main(argv: list[str]) -> None:
     for ticker in tickers:
         report = latest_signal(ticker)
         result = run_backtest(report.data, position_sizing="vol_target")
-        page = render_signal_page(result, ticker, report, output / f"{ticker.lower()}.html")
+        # replay the logged signals against realized fills (report.data covers the
+        # lookback window, which spans the log until it grows past ~a year)
+        track = paper_trade(load_signal_log(SIGNAL_LOG, ticker=ticker), report.data, ticker=ticker)
+        page = render_signal_page(result, ticker, report, output / f"{ticker.lower()}.html",
+                                  live_note=_live_strip(track))
         print(f"{report.message} -> {page.name}")
         cards.append(
             CARD_TEMPLATE
@@ -105,6 +143,7 @@ def main(argv: list[str]) -> None:
             .replace("__IBS__", f"{report.ibs:.3f}")
             .replace("__DATE__", f"{report.bar_date:%Y-%m-%d}")
             .replace("__SIZE__", _deploy_fraction(result, report))
+            .replace("__LIVE__", _card_live(track))
         )
 
     index = (
