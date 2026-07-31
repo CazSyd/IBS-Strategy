@@ -19,12 +19,15 @@ from ibs_strategy import (
     latest_signal,
     run_backtest,
 )
-from ibs_strategy.tracking import load_signal_log, paper_trade
+from ibs_strategy.data import load_cash_rate
+from ibs_strategy.tracking import load_fills, load_signal_log, paper_trade
 from ibs_strategy.web import SIGNAL_COLORS, render_signal_page
 
-# Append-only forward signal log (committed by the workflow); the paper-trade
-# section replays it. Overridable for local testing via IBS_SIGNAL_LOG.
+# Append-only forward records (committed by the workflow): the published signals
+# and the frozen realized fills that the paper-trade section replays. Overridable
+# for local testing via IBS_SIGNAL_LOG (the fills ledger sits beside it).
 SIGNAL_LOG = Path(os.environ.get("IBS_SIGNAL_LOG", "data/signals.csv"))
+FILLS_LOG = SIGNAL_LOG.with_name("fills.csv")
 
 INDEX_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -119,20 +122,53 @@ def _card_live(track) -> str:
     return f" · live <b>{track.total_return:+.1%}</b>"
 
 
+def _trades_table(track) -> str:
+    """A collapsible table of recent closed paper-trades (net of cost), or '' if none."""
+    if not track.trades:
+        return ""
+    rows = []
+    for entry_date, entry_px, exit_date, exit_px, ret in reversed(track.trades[-12:]):
+        cls = "pos" if ret >= 0 else "neg"
+        rows.append(
+            f'<tr><td>{entry_date:%Y-%m-%d} @ {entry_px:.2f}</td>'
+            f'<td>{exit_date:%Y-%m-%d} @ {exit_px:.2f}</td>'
+            f'<td>{(exit_date - entry_date).days}d</td>'
+            f'<td class="{cls}">{ret:+.1%}</td></tr>'
+        )
+    return (
+        f'<details class="trades"><summary>{track.n_trades} closed paper-trades '
+        f'(net of ~2bp/side, newest first)</summary>'
+        f'<table><tr><th>Entry</th><th>Exit</th><th>Held</th><th>Net</th></tr>'
+        f'{"".join(rows)}</table></details>'
+    )
+
+
+def _cash_rate():
+    """The T-bill series for the paper-trade's idle-cash interest; None if unavailable."""
+    try:
+        return load_cash_rate()
+    except Exception:
+        return None
+
+
 def main(argv: list[str]) -> None:
     output = Path(argv[0]) if argv else Path("site")
     tickers = [ticker.upper() for ticker in argv[1:]] or ["TQQQ", "SPXL"]
     output.mkdir(parents=True, exist_ok=True)
 
+    rate = _cash_rate()
     cards = []
     for ticker in tickers:
         report = latest_signal(ticker)
         result = run_backtest(report.data, position_sizing="vol_target")
-        # replay the logged signals against realized fills (report.data covers the
-        # lookback window, which spans the log until it grows past ~a year)
-        track = paper_trade(load_signal_log(SIGNAL_LOG, ticker=ticker), report.data, ticker=ticker)
+        # reconstruct the live paper-trade from the frozen fills (report.data covers
+        # the lookback window, which spans the log until it grows past ~a year), net
+        # of a per-side cost and earning the T-bill on idle cash
+        signals = load_signal_log(SIGNAL_LOG, ticker=ticker)
+        fills = load_fills(FILLS_LOG, ticker=ticker)
+        track = paper_trade(signals, fills, report.data, cost_bps=2.0, cash_rate=rate, ticker=ticker)
         page = render_signal_page(result, ticker, report, output / f"{ticker.lower()}.html",
-                                  live_note=_live_strip(track))
+                                  live_note=_live_strip(track), trades_html=_trades_table(track))
         print(f"{report.message} -> {page.name}")
         cards.append(
             CARD_TEMPLATE

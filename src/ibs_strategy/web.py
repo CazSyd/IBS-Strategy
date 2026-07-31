@@ -112,14 +112,22 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
            padding: 10px 14px 6px; }
   .head-left { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
-  .ticker { font-weight: 700; font-size: 18px; color: var(--ink); }
-  .badge { font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px;
+  .ticker { font-weight: 700; font-size: 22px; color: var(--ink); }
+  .badge { font-weight: 700; font-size: 15px; padding: 2px 11px; border-radius: 999px;
            border: 1.5px solid currentColor; }
-  .meta { color: var(--muted); font-size: 12.5px; }
-  .live-strip { padding: 0 14px 6px; color: var(--muted); font-size: 12px;
+  .meta { color: var(--muted); font-size: 15px; }
+  .live-strip { padding: 0 14px 6px; color: var(--muted); font-size: 13px;
                 overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
   .live-strip b { color: var(--chip-ink); font-weight: 600; }
   .live-strip:empty { display: none; }
+  .trades { padding: 0 14px 6px; font-size: 13px; color: var(--muted); }
+  .trades summary { cursor: pointer; padding: 2px 0; }
+  .trades table { border-collapse: collapse; margin: 4px 0 2px; overflow-x: auto; display: block; }
+  .trades th, .trades td { text-align: left; padding: 1px 16px 1px 0; white-space: nowrap; font-weight: 400; }
+  .trades th { color: var(--muted); }
+  .trades td { color: var(--chip-ink); }
+  .trades .pos { color: #1baf7a; }
+  .trades .neg { color: #e34948; }
   .head-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
   .chip { padding: 6px 11px; border-radius: 999px; border: 1px solid var(--chip-border);
           background: var(--chip-bg); color: var(--chip-ink); font: inherit; font-size: 12.5px;
@@ -136,8 +144,8 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   }
   @media (max-width: 560px) {
     header { padding: 8px 10px 4px; gap: 6px 10px; }
-    .ticker { font-size: 16px; }
-    .meta { font-size: 11.5px; }
+    .ticker { font-size: 19px; }
+    .meta { font-size: 13px; }
   }
 </style>
 </head>
@@ -153,6 +161,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   </div>
 </header>
 <div class="live-strip">__LIVE__</div>
+__TRADES__
 <div id="chart-wrap">__PLOT__</div>
 <script>
 (function () {
@@ -565,6 +574,7 @@ def render_signal_page(
     report: SignalReport | None = None,
     path: Path | None = None,
     live_note: str = "",
+    trades_html: str = "",
 ) -> Path:
     """Write the signal page as a self-contained HTML file and return its path.
 
@@ -606,6 +616,7 @@ def render_signal_page(
         .replace("__DARK__", json.dumps(_DARK_PATCH))
         .replace("__CHART_DATA__", json.dumps(chart_data))
         .replace("__LIVE__", live_note)
+        .replace("__TRADES__", trades_html)
         .replace("__PLOT__", plot_div)
     )
     path.write_text(page, encoding="utf-8")

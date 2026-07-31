@@ -1,10 +1,21 @@
-"""Forward signal log + paper-trade reconstruction for the live pages.
+"""Forward signal log + fills ledger + paper-trade reconstruction for the live pages.
 
-The daily workflow appends each session's *published* signal to a CSV; because
-the file is append-only and every row lands in git history on its date, it is a
-tamper-evident, real-time record - genuine out-of-sample evidence, not a
-backtest. ``paper_trade`` replays the logged BUY/SELL sequence against realized
-next-open fills to reconstruct the live equity curve and current position.
+Two append-only files, both committed by the workflow, so git history is a
+tamper-evident real-time record - genuine out-of-sample evidence, not a backtest:
+
+* **signals log** - every published BUY/SELL/HOLD (the audit trail of what the
+  page told you each day).
+* **fills ledger** - each realized entry/exit at its as-published open price,
+  snapshotted the day after the signal. IBS is a *within-bar ratio*
+  ``(Close-Low)/(High-Low)``, so dividend/split adjustments (which scale every
+  price in a bar by the same factor) leave it unchanged - the signal and the
+  fill *sequence* are revision-invariant, only the prices move. Freezing the
+  fill prices is therefore all it takes to make the live track immune to Yahoo's
+  later adjusted-price revisions, and the ledger is always a stable prefix of
+  the recomputed sequence.
+
+``paper_trade`` builds the live equity from the frozen fills, net of a per-side
+cost and earning the T-bill on idle cash (matching the backtest's methodology).
 """
 
 from __future__ import annotations
@@ -15,19 +26,28 @@ from pathlib import Path
 
 import pandas as pd
 
+from .backtest import cash_growth_factors
 from .metrics import max_drawdown, sharpe_ratio
 
 __all__ = [
     "LOG_COLUMNS",
+    "FILL_COLUMNS",
     "append_signal",
     "load_signal_log",
+    "append_fill",
+    "load_fills",
+    "reconcile_fills",
     "PaperTrack",
     "paper_trade",
 ]
 
 LOG_COLUMNS = ("date", "ticker", "ibs", "signal", "size", "ref_price")
+FILL_COLUMNS = ("date", "ticker", "side", "price", "size")
 
 
+# --------------------------------------------------------------------------- #
+# signals log (the published-signal audit trail)
+# --------------------------------------------------------------------------- #
 def load_signal_log(path, ticker: str | None = None) -> list[dict]:
     """Read the signal log as a date-sorted list of row dicts (optionally one ticker)."""
     path = Path(path)
@@ -50,34 +70,112 @@ def append_signal(path, *, date, ticker, ibs, signal, size, ref_price) -> bool:
     seen = {(r["ticker"], r["date"]) for r in load_signal_log(path)}
     if (ticker, str(date)) in seen:
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    new_file = not path.exists()
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=LOG_COLUMNS)
-        if new_file:
-            writer.writeheader()
-        writer.writerow(
-            {
-                "date": str(date),
-                "ticker": ticker,
-                "ibs": f"{float(ibs):.4f}",
-                "signal": signal,
-                "size": "" if size is None else f"{float(size):.4f}",
-                "ref_price": "" if ref_price is None else f"{float(ref_price):.4f}",
-            }
-        )
+    _append_row(path, LOG_COLUMNS, {
+        "date": str(date),
+        "ticker": ticker,
+        "ibs": f"{float(ibs):.4f}",
+        "signal": signal,
+        "size": "" if size is None else f"{float(size):.4f}",
+        "ref_price": "" if ref_price is None else f"{float(ref_price):.4f}",
+    })
     return True
 
 
+# --------------------------------------------------------------------------- #
+# fills ledger (frozen realized entries/exits)
+# --------------------------------------------------------------------------- #
+def load_fills(path, ticker: str | None = None) -> list[dict]:
+    """Read the fills ledger, sorted by (date, side) (optionally one ticker)."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = [r for r in csv.DictReader(handle) if ticker is None or r["ticker"] == ticker]
+    rows.sort(key=lambda r: (r["date"], r["side"]))
+    return rows
+
+
+def append_fill(path, *, date, ticker, side, price, size) -> bool:
+    """Append one realized fill unless ``(ticker, date, side)`` is already recorded."""
+    path = Path(path)
+    seen = {(r["ticker"], r["date"], r["side"]) for r in load_fills(path)}
+    if (ticker, str(date), side) in seen:
+        return False
+    _append_row(path, FILL_COLUMNS, {
+        "date": str(date),
+        "ticker": ticker,
+        "side": side,
+        "price": f"{float(price):.4f}",
+        "size": "" if size is None else f"{float(size):.4f}",
+    })
+    return True
+
+
+def _append_row(path: Path, columns, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not path.exists()
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        if new_file:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def _fill_sequence(signal_rows: list[dict], prices: pd.DataFrame) -> list[tuple]:
+    """Deterministic (date, side, open_price, size) fills implied by the signals.
+
+    A session's signal acts at the *next* bar's open (no look-ahead). The
+    sequence (which dates, which side) is revision-invariant; only the prices
+    depend on the current ``prices`` frame.
+    """
+    if not signal_rows:
+        return []
+    sig = pd.Series({pd.Timestamp(r["date"]): r["signal"] for r in signal_rows}).sort_index()
+    size = pd.Series(
+        {pd.Timestamp(r["date"]): (float(r["size"]) if r["size"] else 1.0) for r in signal_rows}
+    ).sort_index()
+    px = prices[prices.index >= sig.index.min()]
+    applied = sig.reindex(px.index).ffill().shift(1).to_numpy(dtype=object)
+    applied_size = size.reindex(px.index).ffill().shift(1).to_numpy(dtype=float)
+    opens = px["Open"].to_numpy(dtype=float)
+
+    fills, in_pos = [], False
+    for i in range(len(px)):
+        if not in_pos and applied[i] == "BUY":
+            w = applied_size[i] if applied_size[i] == applied_size[i] else 1.0
+            fills.append((px.index[i], "BUY", float(opens[i]), float(w)))
+            in_pos = True
+        elif in_pos and applied[i] == "SELL":
+            fills.append((px.index[i], "SELL", float(opens[i]), None))
+            in_pos = False
+    return fills
+
+
+def reconcile_fills(signal_rows: list[dict], prices: pd.DataFrame,
+                    existing_fills: list[dict]) -> list[tuple]:
+    """New fills to append: the implied sequence minus what's already frozen.
+
+    Because the sequence is revision-invariant, anything not already in the
+    ledger is a genuinely new fill, recorded at the open as reported *now* (the
+    day after its signal). ``prices`` must span from the log's inception.
+    """
+    have = {(r["date"], r["side"]) for r in existing_fills}
+    return [f for f in _fill_sequence(signal_rows, prices)
+            if (str(f[0].date()), f[1]) not in have]
+
+
+# --------------------------------------------------------------------------- #
+# paper-trade reconstruction
+# --------------------------------------------------------------------------- #
 @dataclass
 class PaperTrack:
-    """Reconstructed live paper-trade from the logged signals."""
+    """Live paper-trade reconstructed from the frozen fills."""
 
     ticker: str
     inception: pd.Timestamp | None
     n_sessions: int
     equity: pd.Series
-    trades: list  # (entry_date, entry_price, exit_date, exit_price, return_pct)
+    trades: list  # (entry_date, entry_price, exit_date, exit_price, net_return) - raw prices, net return
     in_position: bool
     entry_date: pd.Timestamp | None
     entry_price: float | None
@@ -115,51 +213,56 @@ class PaperTrack:
         return sharpe_ratio(self.equity.pct_change().fillna(0.0))
 
 
-def paper_trade(rows: list[dict], prices: pd.DataFrame, capital: float = 1.0,
-                ticker: str = "") -> PaperTrack:
-    """Replay logged signals against next-open fills.
+def paper_trade(signal_rows: list[dict], fills: list[dict], prices: pd.DataFrame, *,
+                capital: float = 1.0, cost_bps: float = 2.0,
+                cash_rate=None, ticker: str = "") -> PaperTrack:
+    """Reconstruct the live equity from the frozen fills.
 
-    ``rows`` are log dicts for one ticker; ``prices`` needs Open/Close on a
-    DatetimeIndex covering the log's span. A session's signal is acted on at the
-    *next* bar's open (the same no-look-ahead timing as the backtest), sized by
-    the logged vol-target weight, and marked to each close.
+    ``signal_rows`` set the inception/session count; ``fills`` (frozen prices)
+    drive the P&L. Each side pays ``cost_bps`` (half-spread + impact + the tiny
+    IBKR commission), idle cash earns ``cash_rate`` (annualized T-bill), and the
+    open position is marked to the latest close.
     """
-    if not rows:
-        return PaperTrack(ticker, None, 0, pd.Series(dtype=float), [], False, None, None, None, None)
-
-    sig = pd.Series({pd.Timestamp(r["date"]): r["signal"] for r in rows}).sort_index()
-    size = pd.Series(
-        {pd.Timestamp(r["date"]): (float(r["size"]) if r["size"] else 1.0) for r in rows}
-    ).sort_index()
-    inception = sig.index.min()
+    inception = pd.Timestamp(signal_rows[0]["date"]) if signal_rows else None
+    n_sessions = len(signal_rows)
+    empty = PaperTrack(ticker, inception, n_sessions, pd.Series(dtype=float), [], False,
+                       None, None, None, None)
+    if inception is None:
+        return empty
     px = prices[prices.index >= inception]
     if len(px) == 0:
-        return PaperTrack(ticker, inception, len(rows), pd.Series(dtype=float), [], False,
-                          None, None, None, None)
+        return empty
 
-    # the prior session's signal acts at THIS bar's open (shift = no look-ahead)
-    applied = sig.reindex(px.index).ffill().shift(1).to_numpy(dtype=object)
-    applied_size = size.reindex(px.index).ffill().shift(1).to_numpy(dtype=float)
-    o = px["Open"].to_numpy(dtype=float)
-    c = px["Close"].to_numpy(dtype=float)
+    factors = cash_growth_factors(px, cash_rate)
+    fill_map = {
+        pd.Timestamp(r["date"]): (r["side"], float(r["price"]),
+                                  float(r["size"]) if r["size"] else 1.0)
+        for r in fills
+    }
+    close = px["Close"].to_numpy(dtype=float)
+    cost = cost_bps / 1e4
 
     cash, shares, in_pos = float(capital), 0.0, False
     e_date = e_price = e_size = None
     equity, trades = [], []
-    for i in range(len(px)):
-        if not in_pos and applied[i] == "BUY":
-            w = applied_size[i] if applied_size[i] == applied_size[i] else 1.0
-            deploy = w * cash
-            shares = deploy / o[i]
-            cash -= deploy
-            in_pos = True
-            e_date, e_price, e_size = px.index[i], float(o[i]), float(w)
-        elif in_pos and applied[i] == "SELL":
-            cash += shares * o[i]
-            trades.append((e_date, e_price, px.index[i], float(o[i]), float(o[i]) / e_price - 1.0))
-            shares, in_pos = 0.0, False
-            e_date = e_price = e_size = None
-        equity.append(cash + shares * c[i])
+    for i, date in enumerate(px.index):
+        cash *= factors[i]  # idle cash earns interest before any fill
+        leg = fill_map.get(date)
+        if leg is not None:
+            side, price, size = leg
+            if side == "BUY" and not in_pos:
+                deploy = size * cash  # cash == equity here (flat)
+                shares = deploy / (price * (1 + cost))
+                cash -= deploy
+                in_pos = True
+                e_date, e_price, e_size = date, price, size
+            elif side == "SELL" and in_pos:
+                cash += shares * price * (1 - cost)
+                net = (price * (1 - cost)) / (e_price * (1 + cost)) - 1.0
+                trades.append((e_date, e_price, date, price, net))
+                shares, in_pos = 0.0, False
+                e_date = e_price = e_size = None
+        equity.append(cash + shares * close[i])
 
-    return PaperTrack(ticker, inception, len(rows), pd.Series(equity, index=px.index), trades,
-                      in_pos, e_date, e_price, e_size, float(c[-1]))
+    return PaperTrack(ticker, inception, n_sessions, pd.Series(equity, index=px.index), trades,
+                      in_pos, e_date, e_price, e_size, float(close[-1]))
