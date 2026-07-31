@@ -239,7 +239,7 @@ The last column reframes the benchmark: since the default sits ~16% invested, co
 
 ![TQQQ walk-forward out-of-sample equity with per-fold thresholds](docs/walkforward.png)
 
-Caveat: these rows are fitted in-sample and model no commissions, slippage, or taxes - and the default trades more than twice as often as the patient exit, so it carries roughly double the slippage and realizes short-term gains twice as often.
+Caveat: these rows are fitted in-sample. Transaction costs are modest - the strategy makes only ~28 round-trips a year, so at realistic spreads (~2 bp/side on TQQQ, ~4 bp on SPXL, IBKR commission folded in) the drag is **~1-3 CAGR points at essentially unchanged Sharpe**, and the edge only dies at a ~50 bp/side breakeven (~25x realistic). **Taxes are the real friction**: it realizes short-term gains ~28 times a year, so a taxable-account return is materially below what's shown - prefer a tax-advantaged account.
 
 ### Extended history, where the defaults were actually chosen
 
