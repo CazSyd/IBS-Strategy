@@ -1,6 +1,10 @@
+import numpy as np
+import pandas as pd
+
 from ibs_strategy.backtest import run_backtest
 from ibs_strategy.live import signal_from_frame
-from ibs_strategy.web import build_signal_figure, render_signal_page
+from ibs_strategy.tracking import PaperTrack
+from ibs_strategy.web import build_paper_figure, build_signal_figure, render_signal_page
 
 
 def test_figure_has_candles_volume_and_trade_markers(scenario_frame):
@@ -86,3 +90,19 @@ def test_signal_page_shows_vol_target_sizing(tmp_path, scenario_frame):
     full = run_backtest(scenario_frame, 0.2, 0.9, 1_000.0)
     full_html = render_signal_page(full, "TEST", report, path=tmp_path / "full.html").read_text("utf-8")
     assert "vol-target" not in full_html  # all-in page never advertises a target
+
+
+def test_build_paper_figure_plots_equity_inside_a_cone():
+    idx = pd.bdate_range("2026-06-01", periods=30)
+    equity = pd.Series(np.linspace(1.0, 1.05, 30), index=idx)
+    track = PaperTrack("T", idx[0], 30, equity, [], False, None, None, None, 100.0)
+    ref = pd.Series([0.010, -0.008] * 60)  # enough reference returns for a band
+
+    fig = build_paper_figure(track, ref)
+    names = [trace.name for trace in fig.data]
+    assert "paper-trade" in names and "backtest expected" in names
+    assert sum("SE" in (n or "") for n in names) == 2  # the +/-1 and +/-2 SE fans
+
+    # too little live history -> no chart
+    empty = PaperTrack("T", None, 0, pd.Series(dtype=float), [], False, None, None, None, None)
+    assert build_paper_figure(empty, ref) is None

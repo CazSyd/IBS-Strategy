@@ -31,7 +31,8 @@ from plotly.subplots import make_subplots
 from .backtest import BacktestResult
 from .live import SignalReport
 
-__all__ = ["build_signal_figure", "render_signal_page", "open_in_browser"]
+__all__ = ["build_signal_figure", "build_paper_figure", "paper_section_html",
+           "render_signal_page", "open_in_browser"]
 
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -105,7 +106,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
           --chip-bg: #1a1a19; --chip-ink: #c3c2b7; --chip-border: rgba(255, 255, 255, 0.14); }
   * { box-sizing: border-box; }
   html { height: 100%; }
-  body { margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+  body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
          padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
          background: var(--page); transition: background 0.2s ease;
          font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -120,6 +121,8 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
                 overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
   .live-strip b { color: var(--chip-ink); font-weight: 600; }
   .live-strip:empty { display: none; }
+  .live-strip.diag { padding-top: 0; font-size: 12px; opacity: 0.82; }
+  .live-strip .warn { color: #e0913b; font-weight: 600; }
   .trades { padding: 0 14px 6px; font-size: 13px; color: var(--muted); }
   .trades summary { cursor: pointer; padding: 2px 0; }
   .trades table { border-collapse: collapse; margin: 4px 0 2px; overflow-x: auto; display: block; }
@@ -133,8 +136,12 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
           background: var(--chip-bg); color: var(--chip-ink); font: inherit; font-size: 12.5px;
           cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .range-chip.active { border-color: var(--chip-ink); font-weight: 700; }
-  #chart-wrap { flex: 1 1 auto; min-height: 0; padding: 0 6px 6px; }
+  #chart-wrap { height: 72vh; min-height: 320px; padding: 0 6px 6px; }
   #chart-wrap > div { height: 100%; }
+  #paper-wrap { height: 340px; padding: 2px 8px 14px; }
+  #paper-wrap > div { height: 100%; }
+  .panel-title { font-size: 13px; color: var(--ink); font-weight: 600; padding: 8px 8px 2px; }
+  .panel-title .muted { color: var(--muted); font-weight: 400; }
   @media (hover: hover) { .chip:hover { filter: brightness(0.95); } }
   /* touch screens: finger-sized chips, and no modebar -- it costs a whole row
      of chart height for zoom/pan controls that pinch and drag already do */
@@ -161,8 +168,10 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   </div>
 </header>
 <div class="live-strip">__LIVE__</div>
+<div class="live-strip diag">__DIAG__</div>
 __TRADES__
 <div id="chart-wrap">__PLOT__</div>
+__PAPER__
 <script>
 (function () {
   var LIGHT = __LIGHT__;
@@ -171,6 +180,7 @@ __TRADES__
   // "bdata" blobs, so chart.data[0].low etc. are NOT indexable in the browser
   var DATA = __CHART_DATA__;
   var chart = document.getElementById("ibs-chart");
+  var paperChart = document.getElementById("paper-chart");
   var toggle = document.getElementById("theme-toggle");
   var N = DATA.dates.length;
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -180,7 +190,13 @@ __TRADES__
     document.documentElement.setAttribute("data-theme", theme);
     toggle.textContent = theme === "dark" ? "\\u2600 Light" : "\\u263E Dark";
     try { localStorage.setItem("ibs-theme", theme); } catch (err) {}
-    Plotly.relayout(chart, theme === "dark" ? DARK : LIGHT);
+    var patch = theme === "dark" ? DARK : LIGHT;
+    Plotly.relayout(chart, patch);
+    if (paperChart) {
+      var pp = {};
+      for (var key in patch) { if (key.indexOf("axis2") < 0) { pp[key] = patch[key]; } }
+      try { Plotly.relayout(paperChart, pp); } catch (err) {}
+    }
   }
 
   function monthNum(i) { return +DATA.dates[i].slice(5, 7); }
@@ -533,6 +549,76 @@ def build_signal_figure(
     return fig
 
 
+def build_paper_figure(track, ref_returns) -> go.Figure | None:
+    """The live paper-trade equity plotted inside the backtest's ±1/±2 SE cone.
+
+    The cone is a log random-walk fan from the backtest daily returns' mean/std
+    (``ref_returns``): at horizon t days, cumulative return ~ ``exp(t*mu ±
+    k*sigma*sqrt(t)) - 1``. Returns None when there is too little live history.
+    """
+    if track is None or track.equity is None or len(track.equity) < 5 or ref_returns is None:
+        return None
+    ref = ref_returns.dropna()
+    if len(ref) < 20:
+        return None
+
+    eq = track.equity
+    dates = [_date_str(value) for value in eq.index]
+    paper = (eq.to_numpy(dtype=float) / float(eq.iloc[0]) - 1.0) * 100.0
+    log_r = np.log1p(ref.to_numpy(dtype=float))
+    mu, sigma = float(log_r.mean()), float(log_r.std(ddof=1))
+    t = np.arange(len(eq), dtype=float)
+
+    def band(k: float) -> np.ndarray:
+        return (np.exp(t * mu + k * sigma * np.sqrt(t)) - 1.0) * 100.0
+
+    fig = go.Figure()
+    # nested ±2 / ±1 SE shaded fans (drawn low-to-high so `tonexty` fills upward)
+    for lo, hi, shade, label in ((band(-2), band(2), "rgba(120,140,170,0.10)", "±2 SE"),
+                                 (band(-1), band(1), "rgba(120,140,170,0.20)", "±1 SE")):
+        fig.add_trace(go.Scatter(x=dates, y=lo, mode="lines", line=dict(width=0),
+                                 hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=dates, y=hi, mode="lines", line=dict(width=0), fill="tonexty",
+                                 fillcolor=shade, name=label, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=dates, y=band(0), mode="lines", name="backtest expected",
+                             line=dict(color=INK_MUTED, width=1.4, dash="dash"), hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=dates, y=paper, mode="lines", name="paper-trade",
+                             line=dict(color=SPAN_BLUE, width=2.4),
+                             hovertemplate="%{x}<br>paper %{y:+.1f}%<extra></extra>"))
+
+    fig.update_layout(
+        template="plotly_white", paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
+        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", size=12, color=INK_SECONDARY),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor=GRIDLINE, font=dict(color=INK, size=12)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0,
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=10, r=10, t=8, b=10),
+    )
+    fig.update_xaxes(type="category", gridcolor=GRIDLINE, linecolor=BASELINE, automargin=True)
+    ticks = _month_ticks(eq.index)
+    if ticks is not None:
+        positions, labels = ticks
+        fig.update_xaxes(tickmode="array", tickvals=positions, ticktext=labels)
+    fig.update_yaxes(title_text="return %", gridcolor=GRIDLINE, linecolor=BASELINE,
+                     zeroline=True, zerolinecolor=BASELINE, ticksuffix="%")
+    return fig
+
+
+def paper_section_html(track, ref_returns) -> str:
+    """The '#paper-wrap' section (title + cone chart) reusing the page's plotly.js, or ''."""
+    fig = build_paper_figure(track, ref_returns)
+    if fig is None:
+        return ""
+    div = fig.to_html(
+        full_html=False, include_plotlyjs=False, div_id="paper-chart",
+        default_width="100%", default_height="100%",
+        config={"displaylogo": False, "responsive": True, "displayModeBar": False},
+    )
+    return ('<div id="paper-wrap"><div class="panel-title">Paper-trade vs backtest expectation '
+            '<span class="muted">(&plusmn;1 / &plusmn;2 SE cone)</span></div>' + div + "</div>")
+
+
 def _sizing_meta(result: BacktestResult, report: SignalReport | None) -> str:
     """A ' · vol-target 40% (size 62%)' fragment when the result is vol-sized.
 
@@ -574,7 +660,9 @@ def render_signal_page(
     report: SignalReport | None = None,
     path: Path | None = None,
     live_note: str = "",
+    diag_note: str = "",
     trades_html: str = "",
+    paper_html: str = "",
 ) -> Path:
     """Write the signal page as a self-contained HTML file and return its path.
 
@@ -616,8 +704,10 @@ def render_signal_page(
         .replace("__DARK__", json.dumps(_DARK_PATCH))
         .replace("__CHART_DATA__", json.dumps(chart_data))
         .replace("__LIVE__", live_note)
+        .replace("__DIAG__", diag_note)
         .replace("__TRADES__", trades_html)
         .replace("__PLOT__", plot_div)
+        .replace("__PAPER__", paper_html)
     )
     path.write_text(page, encoding="utf-8")
     return path

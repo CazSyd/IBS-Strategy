@@ -20,8 +20,8 @@ from ibs_strategy import (
     run_backtest,
 )
 from ibs_strategy.data import load_cash_rate
-from ibs_strategy.tracking import load_fills, load_signal_log, paper_trade
-from ibs_strategy.web import SIGNAL_COLORS, render_signal_page
+from ibs_strategy.tracking import load_fills, load_signal_log, paper_trade, track_status
+from ibs_strategy.web import SIGNAL_COLORS, paper_section_html, render_signal_page
 
 # Append-only forward records (committed by the workflow): the published signals
 # and the frozen realized fills that the paper-trade section replays. Overridable
@@ -94,7 +94,7 @@ def _deploy_fraction(result, report) -> str:
     return f" · size {weight:.0%}"
 
 
-def _live_strip(track) -> str:
+def _live_strip(track, status=None) -> str:
     """The per-page 'Live paper-trade' line reconstructed from the logged signals."""
     if track.inception is None:
         return "<b>Live paper-trade</b> - starts logging after the next close"
@@ -111,7 +111,26 @@ def _live_strip(track) -> str:
         win = track.win_rate
         bits.append(f"{track.n_trades} closed"
                     + (f", {win:.0%} win" if win is not None else ""))
+    if status is not None and status.z is not None:  # the confidence band, quantified
+        bits.append(f"vs backtest {status.expected:+.0%}±{status.band:.0%} ({status.verdict})")
     bits.append("paper, no real capital")
+    return " · ".join(bits)
+
+
+def _diag_line(status) -> str:
+    """The 'Integrity' line: pipeline gaps and data-revision reconciliation."""
+    if status is None:
+        return ""
+    def warn(text):
+        return f'<span class="warn">&#9888; {text}</span>'
+    bits = ["Integrity"]
+    bits.append("no gaps" if status.gaps == 0
+                else warn(f"{status.gaps} missed session{'' if status.gaps == 1 else 's'}"))
+    if status.ibs_mismatches:  # IBS is revision-invariant, so a mismatch is a real data alarm
+        bits.append(warn(f"{status.ibs_mismatches} IBS mismatch"
+                         f"{'' if status.ibs_mismatches == 1 else 'es'}"))
+    bits.append(f"{status.revised_bars} bar{'' if status.revised_bars == 1 else 's'} "
+                f"price-revised (fills frozen)" if status.revised_bars else "prices current")
     return " · ".join(bits)
 
 
@@ -167,8 +186,15 @@ def main(argv: list[str]) -> None:
         signals = load_signal_log(SIGNAL_LOG, ticker=ticker)
         fills = load_fills(FILLS_LOG, ticker=ticker)
         track = paper_trade(signals, fills, report.data, cost_bps=2.0, cash_rate=rate, ticker=ticker)
+        # forward-vs-backtest band + log integrity; the reference uses the same
+        # cash methodology as the paper-trade so the comparison is fair
+        ref = run_backtest(report.data, position_sizing="vol_target",
+                           cash_rate=rate).data["Strategy Return"]
+        status = track_status(track, ref, report.data, signals)
         page = render_signal_page(result, ticker, report, output / f"{ticker.lower()}.html",
-                                  live_note=_live_strip(track), trades_html=_trades_table(track))
+                                  live_note=_live_strip(track, status), diag_note=_diag_line(status),
+                                  trades_html=_trades_table(track),
+                                  paper_html=paper_section_html(track, ref))
         print(f"{report.message} -> {page.name}")
         cards.append(
             CARD_TEMPLATE

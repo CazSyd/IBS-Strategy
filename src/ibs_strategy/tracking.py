@@ -39,6 +39,8 @@ __all__ = [
     "reconcile_fills",
     "PaperTrack",
     "paper_trade",
+    "TrackStatus",
+    "track_status",
 ]
 
 LOG_COLUMNS = ("date", "ticker", "ibs", "signal", "size", "ref_price")
@@ -266,3 +268,80 @@ def paper_trade(signal_rows: list[dict], fills: list[dict], prices: pd.DataFrame
 
     return PaperTrack(ticker, inception, n_sessions, pd.Series(equity, index=px.index), trades,
                       in_pos, e_date, e_price, e_size, float(close[-1]))
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3: forward-vs-expected + integrity checks
+# --------------------------------------------------------------------------- #
+@dataclass
+class TrackStatus:
+    """Diagnostics: is the live run tracking the backtest, and is it clean?"""
+
+    n: int                          # live sessions used for the comparison
+    expected: float | None          # backtest's expected n-session return
+    band: float | None              # +/- one standard error over n sessions
+    z: float | None                 # (live - expected) / band, in SE units
+    gaps: int                       # trading days in the logged span with no signal row
+    last_gap: pd.Timestamp | None
+    ibs_mismatches: int             # logged IBS != current IBS (a real data alarm - IBS is revision-invariant)
+    revised_bars: int               # logged ref_price != current close (expected under dividends/splits)
+    max_revision: float             # largest relative ref_price revision
+
+    @property
+    def verdict(self) -> str | None:
+        if self.z is None:
+            return None
+        if abs(self.z) <= 1.0:
+            return "on track"
+        return "ahead of it" if self.z > 0 else "behind it"
+
+
+def track_status(track: PaperTrack, ref_returns, prices: pd.DataFrame,
+                 signals: list[dict], *, min_sessions: int = 20) -> TrackStatus:
+    """Compare the live paper-track to the backtest and audit the log's integrity.
+
+    ``ref_returns`` is the backtest strategy's daily-return series (its mean/std
+    set the expectation band); ``prices`` (current data) reconciles the logged
+    signals against today's values.
+    """
+    n = len(track.equity)
+    expected = band = z = None
+    if n >= min_sessions and ref_returns is not None and len(ref_returns.dropna()) > 20:
+        r = ref_returns.dropna()
+        m, s = float(r.mean()), float(r.std(ddof=1))
+        expected, band = m * n, s * (n ** 0.5)
+        if band > 0:
+            z = (track.total_return - expected) / band
+
+    # pipeline health: trading days in the logged span missing a signal row
+    log_dates = {pd.Timestamp(row["date"]) for row in signals}
+    gaps, last_gap = 0, None
+    if log_dates:
+        lo, hi = min(log_dates), max(log_dates)
+        for day in prices.index:
+            if lo < day <= hi and day not in log_dates:
+                gaps, last_gap = gaps + 1, day
+
+    # revision integrity: logged ref_price/IBS vs current data
+    ibs = prices["IBS"] if "IBS" in prices.columns else (
+        (prices["Close"] - prices["Low"]) / (prices["High"] - prices["Low"]))
+    close = prices["Close"]
+    ibs_mismatches = revised_bars = 0
+    max_revision = 0.0
+    for row in signals:
+        day = pd.Timestamp(row["date"])
+        if day not in prices.index:
+            continue
+        if row.get("ref_price"):
+            logged = float(row["ref_price"])
+            delta = abs(float(close.loc[day]) - logged) / logged if logged else 0.0
+            if delta > 0.001:
+                revised_bars += 1
+                max_revision = max(max_revision, delta)
+        if row.get("ibs"):
+            current = float(ibs.loc[day])
+            if current == current and abs(current - float(row["ibs"])) > 0.01:
+                ibs_mismatches += 1
+
+    return TrackStatus(n, expected, band, z, gaps, last_gap,
+                       ibs_mismatches, revised_bars, max_revision)
