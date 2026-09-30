@@ -83,3 +83,5 @@ date,ticker,ibs,signal,size,ref_price
 2026-09-25,SPXL,0.8513,SELL,1.0000,291.2800
 2026-09-28,TQQQ,nan,HOLD,1.0000,nan
 2026-09-28,SPXL,nan,HOLD,1.0000,nan
+2026-09-29,TQQQ,nan,HOLD,1.0000,nan
+2026-09-29,SPXL,nan,HOLD,1.0000,nan
