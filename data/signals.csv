@@ -85,3 +85,5 @@ date,ticker,ibs,signal,size,ref_price
 2026-09-28,SPXL,nan,HOLD,1.0000,nan
 2026-09-29,TQQQ,nan,HOLD,1.0000,nan
 2026-09-29,SPXL,nan,HOLD,1.0000,nan
+2026-09-30,TQQQ,nan,HOLD,1.0000,nan
+2026-09-30,SPXL,nan,HOLD,1.0000,nan
