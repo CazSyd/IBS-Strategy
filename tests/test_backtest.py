@@ -165,6 +165,19 @@ def test_requires_columns():
         run_backtest(make_ohlc([(100.0, 104.0, 96.0, 100.0)]), 0.2, 0.9)
 
 
+def test_unpriced_bar_raises():
+    # the 2026-10-01 incident: an entry signal, then a price-less placeholder bar,
+    # used to die sizing the entry with int(NaN)
+    frame = make_ohlc([
+        (100.0, 110.0, 90.0, 100.0),  # IBS 0.50
+        (100.0, 110.0, 90.0, 92.0),   # IBS 0.10 -> entry signal
+        (100.0, 110.0, 90.0, 100.0),  # nulled below, as Yahoo served it
+    ])
+    frame.loc[frame.index[-1], ["Open", "High", "Low", "Close", "IBS"]] = np.nan
+    with pytest.raises(ValueError, match="without Open/Close prices"):
+        run_backtest(frame, 0.2, 0.9, position_sizing="vol_target")
+
+
 def _fill_frame():
     # entry signal on bar 1 (close 92), exit signal on bar 3 (close 109), separated
     return make_ohlc([
