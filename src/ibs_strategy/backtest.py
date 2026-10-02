@@ -204,6 +204,9 @@ def run_backtest(
     missing = [column for column in REQUIRED_COLUMNS if column not in data.columns]
     if missing:
         raise ValueError(f"data is missing required columns: {missing}")
+    unpriced = data.index[data["Open"].isna() | data["Close"].isna()]
+    if len(unpriced):
+        raise ValueError(f"data has bars without Open/Close prices: {list(unpriced[:3])}")
     if len(data) < 2:
         raise ValueError("need at least two bars to backtest")
     for name, value in (("entry_fill", entry_fill), ("exit_fill", exit_fill)):

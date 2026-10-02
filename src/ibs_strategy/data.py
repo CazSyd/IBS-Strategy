@@ -5,7 +5,14 @@ from __future__ import annotations
 import pandas as pd
 import yfinance as yf
 
-__all__ = ["CASH_RATE_TICKER", "compute_ibs", "flatten_columns", "load_cash_rate", "load_data"]
+__all__ = [
+    "CASH_RATE_TICKER",
+    "compute_ibs",
+    "drop_unpriced_bars",
+    "flatten_columns",
+    "load_cash_rate",
+    "load_data",
+]
 
 CASH_RATE_TICKER = "^IRX"  # 13-week T-bill yield, quoted in percent
 
@@ -28,6 +35,17 @@ def flatten_columns(data: pd.DataFrame) -> pd.DataFrame:
         data = data.copy()
         data.columns = data.columns.get_level_values(0)
     return data
+
+
+def drop_unpriced_bars(data: pd.DataFrame) -> pd.DataFrame:
+    """Drop bars missing any of Open, High, Low or Close.
+
+    From ~8pm New York time Yahoo can serve the newest session as a placeholder
+    whose prices come back NaN but whose volume is real. yfinance only filters
+    rows whose volume is missing too, so the placeholder gets through -- and a
+    single NaN open breaks position sizing. A bar without prices is not a bar.
+    """
+    return data.dropna(subset=["Open", "High", "Low", "Close"])
 
 
 def load_data(
@@ -62,7 +80,9 @@ def load_data(
         )
     if data is None or data.empty:
         raise ValueError(f"no data returned for {ticker!r} (start={start}, end={end})")
-    data = flatten_columns(data)
+    data = drop_unpriced_bars(flatten_columns(data))
+    if data.empty:
+        raise ValueError(f"no priced bars returned for {ticker!r} (start={start}, end={end})")
     data["IBS"] = compute_ibs(data)
     return data
 
