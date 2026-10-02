@@ -4,8 +4,12 @@ on:
   push:
     branches: [main]
   schedule:
-    # weekdays at 21:30 UTC, comfortably after the 4pm America/New_York close
-    - cron: "30 21 * * 1-5"
+    # 00:17 New York time Tue-Sat, i.e. after each Mon-Fri session: past Yahoo's
+    # evening window (from ~8pm ET) in which the newest daily bar comes back
+    # without prices, and well before the next open. Off the hour, where GitHub
+    # delays or drops scheduled runs least.
+    - cron: "17 0 * * 2-6"
+      timezone: "America/New_York"
   workflow_dispatch:
 
 permissions:
