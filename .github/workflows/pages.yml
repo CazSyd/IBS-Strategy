@@ -3,14 +3,16 @@ name: Deploy signal pages
 on:
   push:
     branches: [main]
+  # The nightly run is triggered externally (cron-job.org POSTs a
+  # workflow_dispatch at 00:17 New York time, Tue-Sat), because GitHub's own
+  # scheduler has been starting runs 5-7 h late. 00:17 is after Yahoo's evening
+  # window in which the newest bar's close comes back blank.
+  workflow_dispatch:
   schedule:
-    # 00:17 New York time Tue-Sat, i.e. after each Mon-Fri session: past Yahoo's
-    # evening window (from ~8pm ET) in which the newest daily bar comes back
-    # without prices, and well before the next open. Off the hour, where GitHub
-    # delays or drops scheduled runs least.
+    # Backup only, in case the external trigger fails: same time, but GitHub
+    # may start it hours late. Runs are idempotent, so a second run is a no-op.
     - cron: "17 0 * * 2-6"
       timezone: "America/New_York"
-  workflow_dispatch:
 
 permissions:
   contents: write   # to commit the appended signal log back to the repo

@@ -283,7 +283,7 @@ Charts regenerate with `uv run python scripts/build_readme_charts.py`.
 Two GitHub Actions workflows live in `.github/workflows/`:
 
 - **`ci.yml`** - runs `uv sync --locked` + the pytest suite on every push and pull request.
-- **`pages.yml`** - rebuilds the interactive signal pages (`scripts/build_site.py`, TQQQ + SPXL) and deploys them to GitHub Pages on every push to `main` and nightly after each weekday session (00:17 New York time - after Yahoo's evening window in which the newest bar comes back without prices), so the hosted page always shows the latest completed session:
+- **`pages.yml`** - rebuilds the interactive signal pages (`scripts/build_site.py`, TQQQ + SPXL) and deploys them to GitHub Pages on every push to `main` and nightly after each weekday session (00:17 New York time, after Yahoo's evening window in which the newest bar comes back without prices; triggered by an external scheduler calling `workflow_dispatch`, with a GitHub `schedule` at the same time as a backup), so the hosted page always shows the latest completed session:
 
 **Live signals: <https://cazsyd.github.io/IBS-Strategy/>**
 
